@@ -1,0 +1,16 @@
+{
+  "language": "中文",
+  "code": "zh",
+  "welcome_message": "欢迎来到环球赛车游戏！",
+  "menu": {
+    "start": "开始游戏",
+    "options": "选项",
+    "exit": "退出"
+  },
+  "game": {
+    "speed": "速度",
+    "lap": "圈数",
+    "position": "位置",
+    "finish": "完成"
+  }
+}
