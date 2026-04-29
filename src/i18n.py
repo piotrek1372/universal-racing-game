@@ -12,6 +12,7 @@ Version: 1.0.0
 
 import json
 import locale
+import logging
 import os
 from pathlib import Path
 from typing import Dict, Optional, Any
@@ -33,18 +34,28 @@ class LocalizationManager:
         default_language (str): Fallback language code (en)
     """
     
-    def __init__(self, locales_dir: str = "src/locales") -> None:
+    def __init__(self, locales_dir: str = None) -> None:
         """
         Initialize the LocalizationManager.
         
         Args:
             locales_dir: Path to directory containing locale JSON files.
-                        Defaults to 'src/locales'.
+                        Defaults to '../locales' relative to this file (src/).
         """
-        self.locales_dir: Path = Path(locales_dir)
+        if locales_dir is None:
+            # Ustaw bazowa sciezke: wychodzimy z src/ do katalogu glownego
+            self.locales_dir: Path = Path(__file__).parent.parent / "locales"
+        else:
+            self.locales_dir: Path = Path(locales_dir)
         self.current_language: str = ""
         self.translations: Dict[str, Any] = {}
         self.default_language: str = "en"
+        
+        # Setup logging
+        logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
+        
+        # Log the locales directory path
+        logging.debug(f"Szukam tłumaczeń w: {self.locales_dir.absolute()}")
         
         # Ensure locales directory exists
         self.locales_dir.mkdir(parents=True, exist_ok=True)

@@ -35,6 +35,7 @@ from src.ecs import (
     SystemManager,
     LocaleSystem
 )
+from src.ui_manager import SplashManager
 
 
 class UniversalRacingGame(ShowBase):
@@ -49,6 +50,7 @@ class UniversalRacingGame(ShowBase):
         locale_manager: Internationalization system instance
         ecs_manager: Entity-Component-System manager
         ui_elements: List of UI element NodePaths for cleanup
+        splash_manager: Manager for splash screen sequence
     """
     
     def __init__(self) -> None:
@@ -69,22 +71,42 @@ class UniversalRacingGame(ShowBase):
         
         # Initialize systems
         self.locale_manager = get_localization_manager()
+        # Override locales directory to project root
+        self.locale_manager.locales_dir = Path("locales")
         self.ecs_manager = SystemManager()
         self.ui_elements: list[NodePath] = []
+        self.splash_manager: Optional[SplashManager] = None
         
         # Configure ECS with locale system
         self._setup_ecs()
         
-        # Create UI
+        # Show splash screen first
+        self._show_splash()
+    
+    def _show_splash(self) -> None:
+        """
+        Display the splash screen sequence.
+        
+        Creates and starts the splash screen manager. The splash will
+        automatically transition to the main menu when complete.
+        """
+        self.splash_manager = SplashManager(self, on_complete=self._on_splash_complete)
+        self.splash_manager.start()
+    
+    def _on_splash_complete(self) -> None:
+        """
+        Handle splash screen completion.
+        
+        Called when the splash sequence finishes (either naturally or
+        via user skip). Transitions to the main menu UI.
+        """
+        # Create main UI after splash completes
         self._create_ui()
         
-        # Set up update task
-        self.taskMgr.add(self.update, "update")
-        
-        print("\n=== Universal Racing Game Initialized ===")
-        print(f"Language: {self.locale_manager.get_language()}")
-        print(f"Active entities: {len(self.ecs_manager.entities)}")
-        print("=========================================\n")
+        # Clean up splash manager
+        if self.splash_manager:
+            self.splash_manager.destroy()
+            self.splash_manager = None
     
     def _configure_panda3d(self) -> None:
         """
@@ -119,6 +141,28 @@ class UniversalRacingGame(ShowBase):
         # Create and add locale system
         locale_system: LocaleSystem = LocaleSystem(self.locale_manager)
         self.ecs_manager.add_system(locale_system)
+    
+    def _setup_input(self) -> None:
+        """Set up input handlers for the game."""
+        # ESC key to exit the game
+        self.accept("escape", self._on_escape)
+        # Space key to skip splash (if active)
+        self.accept("space", self._on_space)
+    
+    def _on_space(self) -> None:
+        """Handle Space key press - skip splash if active."""
+        if self.splash_manager and self.splash_manager.is_active:
+            self.splash_manager._skip()
+    
+    def _on_escape(self) -> None:
+        """Handle ESC key press - exit the game."""
+        # If splash is active, skip it
+        if self.splash_manager and self.splash_manager.is_active:
+            self.splash_manager._skip()
+            return
+        
+        print("ESC pressed - exiting game")
+        self.userExit()
     
     def _load_unicode_font(self) -> Optional[str]:
         """
@@ -178,47 +222,9 @@ class UniversalRacingGame(ShowBase):
         # Load Unicode font
         font_path = self._load_unicode_font()
         
-        # Create welcome label (localized)
-        welcome_entity = Entity(name="WelcomeLabel")
-        welcome_entity.add_component(TextComponent(
-            text_key="welcome_message",
-            text=self.locale_manager.get("welcome_message"),
-            font_size=24,
-            color=(1.0, 0.8, 0.2, 1.0)  # Gold color
-        ))
-        self.ecs_manager.add_entity(welcome_entity)
-        
-        # Create Panda3D DirectLabel for welcome message
-        welcome_label = DirectLabel(
-            text=welcome_entity.get_component(TextComponent).text,
-            text_fg=(1.0, 0.8, 0.2, 1.0),
-            text_font=self.loader.loadFont(font_path) if font_path else None,
-            text_scale=0.12,
-            frameSize=(-2.5, 2.5, -0.3, 0.3),
-            pos=(0, 0, 0.5),
-            relief=None,
-            text_align=TextNode.ACenter,
-            textMayChange=1  # Allow text updates
-        )
-        welcome_label.setTransparency(True)
-        self.ui_elements.append(welcome_label)
-        
-        # Store reference for updates
-        self.welcome_label = welcome_label
-        self.welcome_entity = welcome_entity
-        
-        # Create menu buttons
-        self._create_menu_buttons(font_path)
-        
-        # Create game info display
-        self._create_game_info(font_path)
-        
-        # Create language switcher
-        self._create_language_switcher(font_path)
-        
         # Create title
         title = DirectLabel(
-            text="Universal Racing Game",
+            text="UNIVERSAL RACING GAME",
             text_fg=(1.0, 1.0, 1.0, 1.0),
             text_font=self.loader.loadFont(font_path) if font_path else None,
             text_scale=0.15,
@@ -229,6 +235,15 @@ class UniversalRacingGame(ShowBase):
         )
         title.setTransparency(True)
         self.ui_elements.append(title)
+        
+        # Create menu buttons with localized text
+        self._create_menu_buttons(font_path)
+        
+        # Create game info display
+        self._create_game_info(font_path)
+        
+        # Create language switcher
+        self._create_language_switcher(font_path)
     
     def _create_menu_buttons(self, font_path: Optional[str]) -> None:
         """
@@ -238,9 +253,10 @@ class UniversalRacingGame(ShowBase):
             font_path: Path to Unicode font file, or None for default
         """
         button_configs = [
-            ("menu.start", 0.2, self._start_game),
-            ("menu.options", 0.0, self._show_options),
-            ("menu.exit", -0.2, self._exit_game)
+            ("btn_start", 0.2, self._start_game),
+            ("btn_free_roam", 0.0, self._free_roam),
+            ("btn_settings", -0.2, self._show_settings),
+            ("btn_exit", -0.4, self._exit_game)
         ]
         
         self.menu_buttons: list[tuple[DirectLabel, str]] = []
@@ -259,7 +275,7 @@ class UniversalRacingGame(ShowBase):
             ))
             self.ecs_manager.add_entity(button_entity)
             
-            # Create Panda3D DirectButton
+            # Create Panda3D DirectLabel as button
             button = DirectLabel(
                 text=localized_text,
                 text_fg=(0.2, 0.6, 1.0, 1.0),
@@ -293,80 +309,30 @@ class UniversalRacingGame(ShowBase):
         Args:
             font_path: Path to Unicode font file, or None for default
         """
-        # Speed display
-        speed_entity = Entity(name="SpeedDisplay")
-        speed_entity.add_component(TextComponent(
-            text_key="game.speed",
-            text=f"{self.locale_manager.get('game.speed')}: 0 km/h",
+        # Engine status display
+        engine_entity = Entity(name="EngineStatus")
+        engine_entity.add_component(TextComponent(
+            text_key="engine_status",
+            text=self.locale_manager.get("engine_status").format(status="OFF"),
             font_size=14,
             color=(0.8, 0.8, 0.8, 1.0)
         ))
-        self.ecs_manager.add_entity(speed_entity)
+        self.ecs_manager.add_entity(engine_entity)
         
-        speed_label = DirectLabel(
-            text=speed_entity.get_component(TextComponent).text,
+        engine_label = DirectLabel(
+            text=engine_entity.get_component(TextComponent).text,
             text_fg=(0.8, 0.8, 0.8, 1.0),
             text_font=self.loader.loadFont(font_path) if font_path else None,
             text_scale=0.07,
             frameSize=(-2.0, 2.0, -0.2, 0.2),
-            pos=(-1.5, 0, -0.5),
+            pos=(-1.5, 0, -0.6),
             relief=None,
             text_align=TextNode.ALeft
         )
-        speed_label.setTransparency(True)
-        self.ui_elements.append(speed_label)
-        self.speed_label = speed_label
-        self.speed_entity = speed_entity
-        
-        # Lap display
-        lap_entity = Entity(name="LapDisplay")
-        lap_entity.add_component(TextComponent(
-            text_key="game.lap",
-            text=f"{self.locale_manager.get('game.lap')}: 1/5",
-            font_size=14,
-            color=(0.8, 0.8, 0.8, 1.0)
-        ))
-        self.ecs_manager.add_entity(lap_entity)
-        
-        lap_label = DirectLabel(
-            text=lap_entity.get_component(TextComponent).text,
-            text_fg=(0.8, 0.8, 0.8, 1.0),
-            text_font=self.loader.loadFont(font_path) if font_path else None,
-            text_scale=0.07,
-            frameSize=(-2.0, 2.0, -0.2, 0.2),
-            pos=(-1.5, 0, -0.65),
-            relief=None,
-            text_align=TextNode.ALeft
-        )
-        lap_label.setTransparency(True)
-        self.ui_elements.append(lap_label)
-        self.lap_label = lap_label
-        self.lap_entity = lap_entity
-        
-        # Position display
-        pos_entity = Entity(name="PositionDisplay")
-        pos_entity.add_component(TextComponent(
-            text_key="game.position",
-            text=f"{self.locale_manager.get('game.position')}: 1st",
-            font_size=14,
-            color=(0.8, 0.8, 0.8, 1.0)
-        ))
-        self.ecs_manager.add_entity(pos_entity)
-        
-        pos_label = DirectLabel(
-            text=pos_entity.get_component(TextComponent).text,
-            text_fg=(0.8, 0.8, 0.8, 1.0),
-            text_font=self.loader.loadFont(font_path) if font_path else None,
-            text_scale=0.07,
-            frameSize=(-2.0, 2.0, -0.2, 0.2),
-            pos=(-1.5, 0, -0.8),
-            relief=None,
-            text_align=TextNode.ALeft
-        )
-        pos_label.setTransparency(True)
-        self.ui_elements.append(pos_label)
-        self.pos_label = pos_label
-        self.pos_entity = pos_entity
+        engine_label.setTransparency(True)
+        self.ui_elements.append(engine_label)
+        self.engine_label = engine_label
+        self.engine_entity = engine_entity
     
     def _create_language_switcher(self, font_path: Optional[str]) -> None:
         """
@@ -379,6 +345,7 @@ class UniversalRacingGame(ShowBase):
             font_path: Path to Unicode font file, or None for default
         """
         languages = [
+            ("Polski", "pl"),
             ("English", "en"),
             ("日本語", "ja"),
             ("العربية", "ar"),
@@ -396,7 +363,7 @@ class UniversalRacingGame(ShowBase):
         self.ui_elements.append(lang_frame)
         
         lang_title = DirectLabel(
-            text="Language / 言語 / لغة / 语言",
+            text="Language / Język",
             text_fg=(1.0, 1.0, 1.0, 1.0),
             text_font=self.loader.loadFont(font_path) if font_path else None,
             text_scale=0.06,
@@ -433,7 +400,7 @@ class UniversalRacingGame(ShowBase):
         Switch application language.
         
         Args:
-            language_code: Target language code (e.g., 'en', 'ja', 'ar', 'zh')
+            language_code: Target language code (e.g., 'en', 'ja', 'ar', 'zh', 'pl')
         
         Note:
             Updates the locale manager and forces the LocaleSystem to
@@ -457,47 +424,33 @@ class UniversalRacingGame(ShowBase):
         Synchronizes Panda3D DirectLabel text with ECS TextComponent
         values after language changes.
         """
-        # Update welcome label
-        if hasattr(self, 'welcome_entity'):
-            text_comp = self.welcome_entity.get_component(TextComponent)
-            if text_comp:
-                self.welcome_label["text"] = text_comp.text
-        
         # Update menu buttons
         if hasattr(self, 'menu_buttons'):
             for button, key in self.menu_buttons:
                 localized = self.locale_manager.get(key)
                 button["text"] = localized
         
-        # Update game info labels
-        if hasattr(self, 'speed_entity'):
-            text_comp = self.speed_entity.get_component(TextComponent)
+        # Update engine status
+        if hasattr(self, 'engine_entity'):
+            text_comp = self.engine_entity.get_component(TextComponent)
             if text_comp:
-                self.speed_label["text"] = text_comp.text
-        
-        if hasattr(self, 'lap_entity'):
-            text_comp = self.lap_entity.get_component(TextComponent)
-            if text_comp:
-                self.lap_label["text"] = text_comp.text
-        
-        if hasattr(self, 'pos_entity'):
-            text_comp = self.pos_entity.get_component(TextComponent)
-            if text_comp:
-                self.pos_label["text"] = text_comp.text
+                self.engine_label["text"] = text_comp.text
     
     def _start_game(self) -> None:
         """Handle start game button click."""
-        print("Start Game button clicked")
-        # Game start logic here
+        print("Start (Online/Offline) kliknięty")
     
-    def _show_options(self) -> None:
-        """Handle options button click."""
-        print("Options button clicked")
-        # Options menu logic here
+    def _free_roam(self) -> None:
+        """Handle free roam button click."""
+        print("Swobodna Jazda kliknięta")
+    
+    def _show_settings(self) -> None:
+        """Handle settings button click."""
+        print("Ustawienia kliknięte")
     
     def _exit_game(self) -> None:
         """Handle exit game button click."""
-        print("Exit Game button clicked")
+        print("Wyjście kliknięte")
         self.userExit()
     
     def update(self, task) -> int:

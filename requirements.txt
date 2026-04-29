@@ -1,0 +1,3 @@
+panda3d>=1.10.0
+panda3d-complexpbr
+requests>=2.25.0
