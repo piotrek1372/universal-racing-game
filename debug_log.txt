@@ -1,0 +1,4 @@
+Known pipe types:
+  glxGraphicsPipe
+(4 aux display modules not yet loaded.)
+:pnmimage:png(warning): iCCP: known incorrect sRGB profile
