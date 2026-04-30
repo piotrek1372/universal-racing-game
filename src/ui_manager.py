@@ -37,7 +37,7 @@ from pathlib import Path
 import sys
 import os
 
-from src.i18n import get_localization_manager
+from .i18n import get_localization_manager
 
 
 class MainMenu:
@@ -382,8 +382,21 @@ class SplashManager:
         # Start ambient audio (starts muted, can be controlled externally)
         if self.sound:
             self.sound.play()
-            # Note: Volume fade-in would require a custom interval or task
-            # For now, audio plays at the set volume (0.0 = muted)
+            # Create volume fade-in interval: 0.0 to 1.0 over 7.5 seconds
+            from direct.interval.IntervalGlobal import LerpFunctionInterval
+            
+            def set_volume(volume):
+                if self.sound:
+                    self.sound.setVolume(volume)
+            
+            self.volume_interval = LerpFunctionInterval(
+                set_volume,
+                fromData=0.0,
+                toData=1.0,
+                duration=7.5,  # Total time for all 3 images (3 * 1.5s hold + transitions)
+                blendType="easeInOut"
+            )
+            self.volume_interval.start()
 
         # Create and start the sequence
         self.sequence = self._create_sequence()
@@ -409,6 +422,11 @@ class SplashManager:
         # Stop and fade out audio
         if self.sound:
             self.sound.stop()
+            self.sound = None
+
+        # Stop volume interval if running
+        if hasattr(self, 'volume_interval'):
+            self.volume_interval.finish()
 
         # Hide splash card
         if self.splash_card:
@@ -430,6 +448,10 @@ class SplashManager:
         if self.sound:
             self.sound.stop()
             self.sound = None
+
+        # Stop volume interval if running
+        if hasattr(self, 'volume_interval'):
+            self.volume_interval.finish()
 
         # Hide splash card
         if self.splash_card:

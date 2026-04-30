@@ -5,15 +5,55 @@ Panda3D-based racing game with full Unicode support for international
 text rendering. Uses Entity-Component-System (ECS) architecture and
 automatic language detection for seamless localization.
 
-This module initializes the Panda3D ShowBase, configures Unicode font
-rendering, and demonstrates the integration of ECS with i18n systems.
-
 Author: URG Development Team
 Version: 1.0.0
 """
 
 import sys
+import os
+from pathlib import Path
 from typing import Optional
+
+# Check if we need to fix imports for direct script execution
+if Path(__file__).name == 'main.py' and not __package__:
+    # We're running as a script or imported without proper package context
+    # Re-import this module properly using importlib
+    import importlib.util
+    import types
+    
+    # Ensure parent directory is in path
+    parent_dir = Path(__file__).parent.parent
+    if str(parent_dir) not in sys.path:
+        sys.path.insert(0, str(parent_dir))
+    
+    # Create a proper module with correct __package__
+    spec = importlib.util.spec_from_file_location('src.main', __file__)
+    proper_module = importlib.util.module_from_spec(spec)
+    proper_module.__package__ = 'src'
+    
+    # Add to sys.modules and execute
+    sys.modules['src.main'] = proper_module
+    sys.modules[__name__] = proper_module
+    spec.loader.exec_module(proper_module)
+    
+    # Copy all attributes to this module
+    for key, value in proper_module.__dict__.items():
+        if key not in globals():
+            globals()[key] = value
+    
+    # Prevent further execution of this script
+    sys.exit(0)
+
+# Normal package imports
+from .i18n import get_localization_manager
+from .ecs import (
+    Entity,
+    TransformComponent,
+    TextComponent,
+    SystemManager,
+    LocaleSystem
+)
+from .ui_manager import SplashManager
 
 # Panda3D imports
 try:
@@ -25,17 +65,6 @@ except ImportError as e:
     print(f"Error: Panda3D not properly installed: {e}")
     print("Please install: pip install panda3d")
     sys.exit(1)
-
-# Local imports
-from src.i18n import get_localization_manager
-from src.ecs import (
-    Entity,
-    TransformComponent,
-    TextComponent,
-    SystemManager,
-    LocaleSystem
-)
-from src.ui_manager import SplashManager
 
 
 class UniversalRacingGame(ShowBase):
