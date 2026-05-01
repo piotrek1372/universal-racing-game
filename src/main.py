@@ -54,13 +54,17 @@ from .ecs import (
     LocaleSystem
 )
 from .ui_manager import SplashManager
+from .core.physics import PhysicsWorld, PhysicsWorldConfig
+from .game.vehicle import Vehicle
 
 # Panda3D imports
 try:
     from direct.showbase.ShowBase import ShowBase
+    from direct.showbase.ShowBaseGlobal import globalClock
     from direct.gui.DirectGui import DirectLabel, DirectButton
-    from panda3d.core import TextNode, NodePath
+    from panda3d.core import LVector3, TextNode, NodePath
     from panda3d.core import loadPrcFileData
+    from direct.task import Task
 except ImportError as e:
     print(f"Error: Panda3D not properly installed: {e}")
     print("Please install: pip install panda3d")
@@ -105,12 +109,35 @@ class UniversalRacingGame(ShowBase):
         self.ecs_manager = SystemManager()
         self.ui_elements: list[NodePath] = []
         self.splash_manager: Optional[SplashManager] = None
+        self.physics_world: Optional[PhysicsWorld] = None
+        self.player_vehicle: Optional[Vehicle] = None
         
         # Configure ECS with locale system
         self._setup_ecs()
+        self._setup_physics()
+        self._setup_input()
+        self.taskMgr.add(self.update, "update_task")
+        self.taskMgr.add(self._physics_task, "physics_task")
         
         # Show splash screen first
         self._show_splash()
+
+    def _setup_physics(self) -> None:
+        """
+        Initialize Bullet world with fixed 60 Hz stepping and gravity.
+        """
+
+        self.physics_world = PhysicsWorld(
+            PhysicsWorldConfig(
+                gravity=LVector3(0.0, 0.0, -9.81),
+                fixed_time_step=1.0 / 60.0,
+                max_substeps=6,
+            )
+        )
+        self.player_vehicle = Vehicle(
+            physics_world=self.physics_world,
+            parent=self.render,
+        )
     
     def _show_splash(self) -> None:
         """
@@ -191,6 +218,7 @@ class UniversalRacingGame(ShowBase):
             return
         
         print("ESC pressed - exiting game")
+        self.cleanup()
         self.userExit()
     
     def _load_unicode_font(self) -> Optional[str]:
@@ -480,6 +508,7 @@ class UniversalRacingGame(ShowBase):
     def _exit_game(self) -> None:
         """Handle exit game button click."""
         print("Wyjście kliknięte")
+        self.cleanup()
         self.userExit()
     
     def update(self, task) -> int:
@@ -502,6 +531,44 @@ class UniversalRacingGame(ShowBase):
         self.ecs_manager.update(dt)
         
         return task.cont
+
+    def _physics_task(self, task: Task) -> int:
+        """
+        Advance fixed-step physics and sync vehicle visuals each frame.
+
+        Args:
+            task: Panda3D task object.
+
+        Returns:
+            int: `task.cont` while simulation remains active.
+        """
+
+        if not self.physics_world:
+            return task.cont
+
+        dt: float = globalClock.getDt()
+        self.physics_world.step(dt)
+
+        if self.player_vehicle:
+            self.player_vehicle.sync_visuals()
+
+        return task.cont
+
+    def cleanup(self) -> None:
+        """
+        Cleanly detach runtime systems and physics objects.
+        """
+
+        self.taskMgr.remove("physics_task")
+        self.taskMgr.remove("update_task")
+
+        if self.player_vehicle:
+            self.player_vehicle.cleanup()
+            self.player_vehicle = None
+
+        if self.physics_world:
+            self.physics_world.cleanup()
+            self.physics_world = None
 
 
 def main() -> None:
