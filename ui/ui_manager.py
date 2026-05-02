@@ -64,6 +64,7 @@ class UIManager(DirectObject):
         menu = factory(self.game_base, self.profile, self, self.labels)
         self._current = menu
         menu.show()
+        menu.reanchor_to_aspect_markers()
 
     def _register_builtin(self) -> None:
         reg = self._registry
@@ -155,6 +156,7 @@ class UIManager(DirectObject):
         menu = factory(self.game_base, self.profile, self, self.labels)
         self._current = menu
         menu.show()
+        menu.reanchor_to_aspect_markers()
 
     def _on_escape(self) -> None:
         if len(self._stack) > 1:

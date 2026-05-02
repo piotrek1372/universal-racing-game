@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+from panda3d.core import Filename
 
 
 class PathManager:
@@ -16,6 +18,23 @@ class PathManager:
     AUDIO_DIR: Path = ASSETS_DIR / "audio"
     MODELS_DIR: Path = ASSETS_DIR / "models"
     FONTS_DIR: Path = ASSETS_DIR / "fonts"
+
+    @staticmethod
+    def to_posix_path(path: Path) -> str:
+        """Resolved path with forward slashes (portable string, valid on Linux and Windows)."""
+        return path.resolve().as_posix()
+
+    @classmethod
+    def to_panda_path(cls, path: Union[Path, str]) -> str:
+        """
+        Normalize a filesystem path for Panda3D loader APIs.
+
+        Avoids Windows-style paths (backslashes / drive-letter quirks) that trigger
+        ``Filename uses Windows-style path`` warnings and load failures.
+        """
+        p = path if isinstance(path, Path) else Path(path)
+        os_specific = p.resolve().as_posix()
+        return Filename.fromOsSpecific(os_specific).getFullpath()
 
     @classmethod
     def resolve_language_candidates(cls, lang_code: str) -> tuple[Path, Path]:

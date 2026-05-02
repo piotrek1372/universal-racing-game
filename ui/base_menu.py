@@ -33,7 +33,7 @@ _CYBER_PARENT_SCALE: float = 0.078
 _CYBER_SCALE_REF_ASPECT: float = 16.0 / 9.0
 
 # Anchor layout under `base.a2dLeftCenter` + optional `base.a2dBottomLeft`.
-_LIST_ANCHOR_OFFSET_X: float = 0.2
+_LIST_ANCHOR_OFFSET_X: float = 0.1
 _LIST_ROW_START_Z: float = 0.5
 _LIST_ROW_STEP: float = 0.15
 _SECTION_TITLE_GAP_Z: float = 0.14
@@ -101,6 +101,13 @@ class BaseMenu(DirectObject, GameUIBase):
         self._hover_sfx = None
         self._hover_sfx_absent: bool = False
         self._glitch_tasks: List[str] = []
+
+    def reanchor_to_aspect_markers(self) -> None:
+        """Re-parent the list hub to ``a2dLeftCenter`` after ``aspect2d`` / window updates."""
+        if self.list_parent is None or self.list_parent.isEmpty():
+            return
+        self.list_parent.reparentTo(self.game_base.a2dLeftCenter)
+        self.list_parent.setPos(_LIST_ANCHOR_OFFSET_X, 0.0, 0.0)
 
     def aspect_ratio(self) -> float:
         return float(self.game_base.getAspectRatio())
@@ -178,7 +185,9 @@ class BaseMenu(DirectObject, GameUIBase):
             if font_path is None:
                 continue
             try:
-                self._cyber_font_node = self.game_base.loader.loadFont(str(font_path))
+                self._cyber_font_node = self.game_base.loader.loadFont(
+                PathManager.to_panda_path(font_path)
+            )
                 return self._cyber_font_node
             except OSError:
                 continue

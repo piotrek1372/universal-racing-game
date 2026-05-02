@@ -26,7 +26,7 @@ _LAYOUT_REFRESH_TASK = "urg-main-menu-display-refresh"
 
 
 class MainMenu(DirectObject, GameUIBase):
-    """Fullscreen backdrop under render2d; routes navigation via `UIManager`."""
+    """Fullscreen backdrop under ``aspect2d``; routes navigation via `UIManager`."""
 
     def __init__(
         self,
@@ -49,7 +49,7 @@ class MainMenu(DirectObject, GameUIBase):
 
         self.background: Optional[NodePath] = None
         self.background_fade: Optional[Sequence] = None
-        self._render2d_bg_anchor: Optional[NodePath] = None
+        self._menu_bg_anchor: Optional[NodePath] = None
 
     def show(self) -> None:
         """Mount backdrop and enter Neural Link root."""
@@ -78,17 +78,17 @@ class MainMenu(DirectObject, GameUIBase):
         return Task.done
 
     def _apply_display_layout_refresh(self) -> None:
-        if self._render2d_bg_anchor is None or self._render2d_bg_anchor.isEmpty():
+        if self._menu_bg_anchor is None or self._menu_bg_anchor.isEmpty():
             return
         self._release_background_card_only()
-        self._mount_background_card_into(self._render2d_bg_anchor, play_fade=False)
+        self._mount_background_card_into(self._menu_bg_anchor, play_fade=False)
         self.ui_manager.refresh_active_menu()
 
     def _release_background_only(self) -> None:
         self._release_background_card_only()
-        if self._render2d_bg_anchor is not None and not self._render2d_bg_anchor.isEmpty():
-            self._render2d_bg_anchor.removeNode()
-        self._render2d_bg_anchor = None
+        if self._menu_bg_anchor is not None and not self._menu_bg_anchor.isEmpty():
+            self._menu_bg_anchor.removeNode()
+        self._menu_bg_anchor = None
 
     def _release_background_card_only(self) -> None:
         if self.background_fade is not None:
@@ -98,16 +98,16 @@ class MainMenu(DirectObject, GameUIBase):
             self.background.removeNode()
         self.background = None
 
-    def _ensure_render2d_background_anchor(self) -> NodePath:
-        """Stable parent under render2d (normalized framing; cover sizing is on the card)."""
-        anchor = self.game_base.render2d.attachNewNode("main_menu_bg_anchor")
+    def _ensure_menu_background_anchor(self) -> NodePath:
+        """Parent under ``aspect2d`` so the backdrop shares DirectGui's normalized coordinates."""
+        anchor = self.game_base.aspect2d.attachNewNode("main_menu_bg_anchor")
         anchor.setPos(0.0, 0.0, 0.0)
         anchor.setScale(1.0, 1.0, 1.0)
-        self._render2d_bg_anchor = anchor
+        self._menu_bg_anchor = anchor
         return anchor
 
     def _create_background(self) -> None:
-        anchor = self._ensure_render2d_background_anchor()
+        anchor = self._ensure_menu_background_anchor()
         self._mount_background_card_into(anchor, play_fade=True)
 
     def _mount_background_card_into(self, anchor: NodePath, *, play_fade: bool) -> None:
@@ -122,10 +122,10 @@ class MainMenu(DirectObject, GameUIBase):
                 self.game_base,
                 background_path,
                 parent=anchor,
+                under_aspect2d=True,
             )
             if card is not None:
                 card.setPos(0.0, 0.0, 0.0)
-                card.setScale(1.0, 1.0, 1.0)
                 self.background = card
             else:
                 LOGGER.warning("Menu background texture failed; using solid fallback.")
@@ -133,18 +133,18 @@ class MainMenu(DirectObject, GameUIBase):
                     self.game_base,
                     menu_aspect,
                     parent=anchor,
+                    under_aspect2d=True,
                 )
                 self.background.setPos(0.0, 0.0, 0.0)
-                self.background.setScale(1.0, 1.0, 1.0)
         else:
             LOGGER.warning("Menu background image not found, using color fallback.")
             self.background = solid_color_menu_fallback_card(
                 self.game_base,
                 menu_aspect,
                 parent=anchor,
+                under_aspect2d=True,
             )
             self.background.setPos(0.0, 0.0, 0.0)
-            self.background.setScale(1.0, 1.0, 1.0)
 
         self.background.setTransparency(TransparencyAttrib.MAlpha)
         if play_fade:

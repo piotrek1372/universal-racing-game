@@ -1,4 +1,9 @@
-"""Slim game entry point and high-level state orchestration."""
+"""Slim game entry point and high-level state orchestration.
+
+Panda3D loaders (``loadTexture``, ``loadMusic``, ``loadModel``, ``loadFont``) expect
+paths normalized via ``PathManager.to_panda_path`` / ``Filename.fromOsSpecific``; the
+splash flow and menus apply that in ``ui/splash_screen`` and ``ui/base_screen``.
+"""
 
 from __future__ import annotations
 
@@ -63,6 +68,7 @@ def _apply_engine_prc_before_showbase() -> None:
     _ENGINE_PROBE_DIMENSIONS = dims
 
     lines: list[str] = [
+        "aspect-ratio 0",
         "window-title Universal Racing Game // Neural Link",
         "fullscreen #f",
         "undecorated #t",
@@ -108,6 +114,7 @@ class RacingGame(ShowBase):
         self.disableMouse()
 
         self._configure_window_after_open()
+
         self.lang: Dict[str, str] = self._load_language("en")
 
         self.main_menu: MainMenu | None = None
@@ -121,13 +128,41 @@ class RacingGame(ShowBase):
         self.accept("aspectRatioChanged", self._on_viewport_topology_changed)
         self.accept("window-event", self._on_viewport_topology_changed)
 
-    def windowEvent(self) -> None:
+        # After UI shell exists: synthetic window-event must not run before ``main_menu`` attr exists.
+        self._sync_2d_after_window_props()
+
+    def windowEvent(self, win) -> None:  # type: ignore[override]
         """Preserve ShowBase window bookkeeping; refresh UI after framebuffer changes."""
-        super().windowEvent()
-        self._on_viewport_topology_changed()
+        super().windowEvent(win)
+        if hasattr(self, "main_menu") and self.main_menu is not None:
+            self.main_menu.refresh_display_layout()
+
+    def _sync_2d_after_window_props(self) -> None:
+        """
+        Match ShowBase.windowEvent: apply aspect2d / pixel2d from the real window size.
+
+        requestProperties alone may not run windowEvent immediately; without this,
+        aspect2d stays at the default (~800×600) while the framebuffer is larger.
+        """
+        if self.win is None:
+            return
+        ar = self.getAspectRatio()
+        if ar and ar > 0:
+            self.adjustWindowAspectRatio(ar)
+        if self.win.hasSize() and self.win.getSbsLeftYSize() != 0:
+            self.pixel2d.setScale(
+                2.0 / self.win.getSbsLeftXSize(),
+                1.0,
+                2.0 / self.win.getSbsLeftYSize(),
+            )
+        else:
+            xsize, ysize = self.getSize()
+            if xsize > 0 and ysize > 0:
+                self.pixel2d.setScale(2.0 / xsize, 1.0, 2.0 / ysize)
+        self.messenger.send("window-event", [self.win])
 
     def _on_viewport_topology_changed(self, *_args: object) -> None:
-        if self.main_menu is not None:
+        if hasattr(self, "main_menu") and self.main_menu is not None:
             self.main_menu.refresh_display_layout()
 
     def _resolve_borderless_dimensions(self) -> Optional[tuple[int, int]]:

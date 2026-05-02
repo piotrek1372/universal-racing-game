@@ -53,7 +53,7 @@ class SplashScreen(GameUIBase):
 
         try:
             music: Optional[AudioSound] = self.game_base.loader.loadMusic(
-                str(resolved_audio_path)
+                PathManager.to_panda_path(resolved_audio_path)
             )
         except OSError as error:
             LOGGER.warning("Failed to load background music %s: %s", resolved_audio_path, error)

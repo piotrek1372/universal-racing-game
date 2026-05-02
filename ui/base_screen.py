@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from panda3d.core import CardMaker, NodePath, TransparencyAttrib
+from panda3d.core import CardMaker, Filename, NodePath, TransparencyAttrib
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,14 +32,23 @@ def fullscreen_textured_card(
     image_path: Path,
     card_name: str,
 ) -> Optional[NodePath]:
-    """Attach a fullscreen render2d quad with the given texture; alpha enabled."""
+    """
+    Fullscreen splash card under ``aspect2d`` (same normalized space as DirectGui).
+
+    Uses a uniform ``[-1, 1] × [-1, 1]`` frame so the quad tracks ``aspect2d`` scaling
+    and fills the window after ``adjustWindowAspectRatio`` / ``window-event``.
+    """
     cm = CardMaker(card_name)
-    cm.setFrameFullscreenQuad()
-    card: NodePath = game_base.render2d.attachNewNode(cm.generate())
-    texture = game_base.loader.loadTexture(str(image_path))
+    cm.setFrame(-1.0, 1.0, -1.0, 1.0)
+    card: NodePath = game_base.aspect2d.attachNewNode(cm.generate())
+    panda_path = Filename.fromOsSpecific(str(image_path)).getFullpath()
+    texture = game_base.loader.loadTexture(panda_path)
     card.setTexture(texture)
     card.setTransparency(TransparencyAttrib.MAlpha)
     card.setColorScale(1, 1, 1, 0)
+    card.setBin("background", _DEFAULT_BACKGROUND_BIN_SORT)
+    card.setDepthWrite(False)
+    card.setDepthTest(False)
     return card
 
 
@@ -49,11 +58,15 @@ def solid_color_menu_fallback_card(
     *,
     parent: Optional[NodePath] = None,
     background_sort: int = _DEFAULT_BACKGROUND_BIN_SORT,
+    under_aspect2d: bool = False,
 ) -> NodePath:
     """Fullscreen gray card when no background image is available."""
     root = parent if parent is not None else game_base.render2d
     card_maker = CardMaker("menu_bg_fallback")
-    card_maker.setFrame(-aspect, aspect, -1.0, 1.0)
+    if under_aspect2d:
+        card_maker.setFrame(-1.0, 1.0, -1.0, 1.0)
+    else:
+        card_maker.setFrame(-aspect, aspect, -1.0, 1.0)
     card: NodePath = root.attachNewNode(card_maker.generate())
     card.setColor(0.15, 0.15, 0.15, 1.0)
     card.setTransparency(TransparencyAttrib.MAlpha)
@@ -70,17 +83,18 @@ def textured_cover_background_card(
     card_name: str = "menu_bg_cover",
     parent: Optional[NodePath] = None,
     background_sort: int = _DEFAULT_BACKGROUND_BIN_SORT,
+    under_aspect2d: bool = False,
 ) -> Optional[NodePath]:
     """
-    Full-window backdrop on render2d that preserves texture aspect ratio (cover crop).
+    Full-window backdrop that preserves texture aspect ratio (cover crop).
 
-    Card geometry matches the usual Panda menu convention [-aspect, aspect] × [-1, 1]
-    for the visible render2d framing; half extents are expanded uniformly so both axes
-    fully cover that region (texture aspect preserved — cropped at edges).
+    When ``under_aspect2d`` is True, the card uses a uniform ``[-1, 1] × [-1, 1]`` frame
+    under ``aspect2d`` (matches DirectGui). Otherwise it uses render2d-style extents
+    ``[-aspectRatio, aspectRatio] × [-1, 1]``.
 
     Layering uses ``setBin`` only (``NodePath`` has no ``setSort`` in all Panda builds).
     """
-    path_str = str(image_path)
+    path_str = Filename.fromOsSpecific(str(image_path)).getFullpath()
     try:
         tex = game_base.loader.loadTexture(path_str)
     except OSError as exc:
@@ -94,7 +108,8 @@ def textured_cover_background_card(
     th = max(float(tex.get_y_size()), 1.0)
     tex_ar = tw / th
 
-    win_ar = float(game_base.getAspectRatio())
+    # Under aspect2d, menu space is a square [-1, 1]²; "window" aspect for cover is 1:1.
+    win_ar = 1.0 if under_aspect2d else float(game_base.getAspectRatio())
     cover_k = max(1.0, win_ar / tex_ar)
 
     half_w = cover_k * tex_ar
