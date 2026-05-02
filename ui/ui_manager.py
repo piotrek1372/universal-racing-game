@@ -52,6 +52,15 @@ class UIManager(DirectObject):
 
         self.accept("escape", self._on_escape)
 
+    def is_stack_empty(self) -> bool:
+        return len(self._stack) == 0
+
+    def teardown_active_menu(self) -> None:
+        """Remove the current menu from the scene; stack keys are left unchanged for rebuild."""
+        if self._current is not None:
+            self._current.destroy()
+            self._current = None
+
     def refresh_active_menu(self) -> None:
         """Re-instantiate the top-of-stack menu (same key) after resolution / aspect changes."""
         if not self._stack:

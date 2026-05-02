@@ -23,6 +23,9 @@ from panda3d.core import (
     loadPrcFileData,
 )
 
+loadPrcFileData("", "aspect-ratio 0")
+loadPrcFileData("", "view-unused-space #f")
+
 # Populated by _apply_engine_prc_before_showbase for post-init borderless sizing.
 _ENGINE_PRC_INCLUDED_WIN_SIZE: bool = False
 _ENGINE_PROBE_DIMENSIONS: Optional[tuple[int, int]] = None
@@ -70,6 +73,7 @@ def _apply_engine_prc_before_showbase() -> None:
     # aspect-ratio 0: do not lock to a fixed framebuffer aspect (prevents letterboxing).
     lines: list[str] = [
         "aspect-ratio 0",
+        "view-unused-space #f",
         "window-title Universal Racing Game // Neural Link",
         "fullscreen #f",
         "undecorated #t",
@@ -104,7 +108,8 @@ from ui.splash_screen import SplashScreen
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
-_DEFERRED_MAIN_MENU_TASK = "urg-deferred-main-menu-show"
+_POST_INIT_TASK = "post-init"
+_UI_SETUP_TASK = "ui-setup"
 
 
 class RacingGame(ShowBase):
@@ -112,6 +117,33 @@ class RacingGame(ShowBase):
 
     def __init__(self) -> None:
         super().__init__()
+        base = self
+        base.cam2d.node().getDisplayRegion(0).setDimensions(0, 1, 0, 1)
+
+        wp = WindowProperties()
+        wp.setUndecorated(True)
+        wp.setFullscreen(False)
+        wp.setFixedSize(False)
+        wp.setTitle("Universal Racing Game // Neural Link")
+
+        detected_width, detected_height = 1280, 720
+        try:
+            pipe = self.pipe
+            if pipe is not None:
+                w = int(pipe.get_display_width())
+                h = int(pipe.get_display_height())
+                if w > 0 and h > 0:
+                    detected_width, detected_height = w, h
+        except Exception:
+            pass
+
+        wp.setSize(detected_width, detected_height)
+        wp.setOrigin(0, 0)
+        if self.win is not None:
+            self.win.requestProperties(wp)
+
+        self.force_ui_remap()
+
         self.disableMouse()
 
         # Shell UI first so ``main_menu`` exists before any ``window-event`` / 2-D sync side effects.
@@ -127,15 +159,49 @@ class RacingGame(ShowBase):
         self.accept("aspectRatioChanged", self._on_viewport_topology_changed)
         self.accept("window-event", self._on_viewport_topology_changed)
 
-        self._configure_window_after_open()
         self._sync_2d_after_window_props()
+        self.force_ui_remap()
 
         if self.win is not None:
             self.messenger.send("window-event", [self.win])
 
+        if self.win is not None:
+            print(self.win.getProperties().getXSize(), self.win.getProperties().getYSize())
+
+        if sys.platform.startswith("linux"):
+            LOGGER.debug(
+                "Linux HiDPI: GDK_SCALE / GDK_DPI_SCALE affect toolkit scaling when set before launch; "
+                "want-high-dpi is enabled in engine PRC."
+            )
+            os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
+
+        self.taskMgr.remove(_UI_SETUP_TASK)
+        self.taskMgr.doMethodLater(0.2, self.initial_ui_setup, _UI_SETUP_TASK)
+
+    def initial_ui_setup(self, task: Task) -> object:
+        """Sync aspect2d, ensure mouse watcher is usable without trackball, refresh menu if present."""
+        self.force_ui_remap()
+        mwn = self.mouseWatcherNode
+        if mwn is None or mwn.isEmpty():
+            self.enableMouse()
+        self.disableMouse()
+        if self.main_menu is not None:
+            self.main_menu.rebuild_ui()
+        return Task.done
+
+    def force_ui_remap(self) -> None:
+        base = self
+        aspect_ratio = base.getAspectRatio()
+        print(f"DEBUG: Remapping UI with Aspect Ratio: {aspect_ratio}")
+        base.a2dTopCenter.setPos(0, 0, 1)
+        base.a2dBottomCenter.setPos(0, 0, -1)
+        base.a2dLeftCenter.setPos(-aspect_ratio, 0, 0)
+        base.a2dRightCenter.setPos(aspect_ratio, 0, 0)
+
     def windowEvent(self, win) -> None:  # type: ignore[override]
         """Preserve ShowBase window bookkeeping; refresh UI after framebuffer changes."""
         super().windowEvent(win)
+        self.force_ui_remap()
         if hasattr(self, "main_menu") and self.main_menu:
             self.main_menu.refresh_display_layout()
 
@@ -167,50 +233,6 @@ class RacingGame(ShowBase):
     def _on_viewport_topology_changed(self, *_args: object) -> None:
         if hasattr(self, "main_menu") and self.main_menu:
             self.main_menu.refresh_display_layout()
-
-    def _resolve_borderless_dimensions(self) -> Optional[tuple[int, int]]:
-        """Prefer boot probe; retry pipe; finally use current framebuffer size."""
-        if _ENGINE_PROBE_DIMENSIONS is not None:
-            return _ENGINE_PROBE_DIMENSIONS
-        retry = _probe_pipe_display_dimensions()
-        if retry is not None:
-            return retry
-        if self.win is not None:
-            try:
-                fb = self.win.getFbProperties()
-                tw = int(fb.get_x_size())
-                th = int(fb.get_y_size())
-                if tw > 0 and th > 0:
-                    return (tw, th)
-            except Exception:
-                pass
-        return None
-
-    def _configure_window_after_open(self) -> None:
-        """Borderless windowed (not exclusive fullscreen) for X11/Mesa compatibility."""
-        props = WindowProperties()
-        props.setFullscreen(False)
-        props.setUndecorated(True)
-        props.setFixedSize(False)
-        props.setTitle("Universal Racing Game // Neural Link")
-
-        dims = self._resolve_borderless_dimensions()
-        if dims is not None:
-            w, h = int(dims[0]), int(dims[1])
-            props.setSize(w, h)
-            props.setOrigin(0, 0)
-
-        if self.win is not None:
-            self.win.requestProperties(props)
-
-        if sys.platform.startswith("linux"):
-            LOGGER.debug(
-                "Linux HiDPI: GDK_SCALE / GDK_DPI_SCALE affect toolkit scaling when set before launch; "
-                "want-high-dpi is enabled in engine PRC."
-            )
-            os.environ.setdefault(
-                "QT_AUTO_SCREEN_SCALE_FACTOR", "1"
-            )  # harmless if Qt tools run alongside
 
     def _load_language(self, lang_code: str) -> Dict[str, str]:
         """Load language dictionary from assets/lang with fallback."""
@@ -250,16 +272,14 @@ class RacingGame(ShowBase):
             on_settings=self._on_settings,
             on_exit=self._on_exit,
         )
-        self.taskMgr.remove(_DEFERRED_MAIN_MENU_TASK)
-        self.taskMgr.doMethodLater(
-            0.0,
-            self._deferred_main_menu_show_task,
-            _DEFERRED_MAIN_MENU_TASK,
-        )
+        self.taskMgr.remove(_POST_INIT_TASK)
+        self.taskMgr.doMethodLater(0.1, self.post_init_setup, _POST_INIT_TASK)
 
-    def _deferred_main_menu_show_task(self, task: Task) -> object:
+    def post_init_setup(self, task: Task) -> object:
+        """After ``requestProperties`` / aspect sync, rebuild menu UI at the real aspect ratio."""
         if self.main_menu is not None:
-            self.main_menu.show()
+            self.main_menu.rebuild_ui()
+            self.force_ui_remap()
         return Task.done
 
     def _on_settings(self) -> None:
@@ -273,7 +293,8 @@ class RacingGame(ShowBase):
 
     def cleanup(self) -> None:
         """Release state managers and UI."""
-        self.taskMgr.remove(_DEFERRED_MAIN_MENU_TASK)
+        self.taskMgr.remove(_POST_INIT_TASK)
+        self.taskMgr.remove(_UI_SETUP_TASK)
         self.ignoreAll()
         if self.splash_screen is not None:
             self.splash_screen.cleanup()

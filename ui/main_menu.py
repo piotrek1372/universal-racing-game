@@ -1,4 +1,4 @@
-"""Main menu shell: shared backdrop plus UIManager-driven Neural Link hierarchy."""
+"""Main menu shell: ``render2d`` fullscreen backdrop plus UIManager-driven hierarchy."""
 
 from __future__ import annotations
 
@@ -9,24 +9,21 @@ from typing import Callable, Dict, Optional
 from direct.interval.IntervalGlobal import Sequence
 from direct.showbase.DirectObject import DirectObject
 from direct.task import Task
-from panda3d.core import NodePath, TransparencyAttrib
+from panda3d.core import CardMaker, Filename, NodePath, TransparencyAttrib
 
 from core.path_manager import PathManager
-from ui.base_screen import (
-    GameUIBase,
-    solid_color_menu_fallback_card,
-    textured_cover_background_card,
-)
+from ui.base_screen import GameUIBase
 from ui.player_profile import PlayerProfile
 from ui.ui_manager import UIManager
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
 _LAYOUT_REFRESH_TASK = "urg-main-menu-display-refresh"
+_BACKGROUND_BIN_SORT: int = -10
 
 
 class MainMenu(DirectObject, GameUIBase):
-    """Fullscreen backdrop under ``aspect2d``; routes navigation via `UIManager`."""
+    """Fullscreen ``render2d`` backdrop; DirectGui under ``aspect2d`` via `UIManager`."""
 
     def __init__(
         self,
@@ -49,13 +46,30 @@ class MainMenu(DirectObject, GameUIBase):
 
         self.background: Optional[NodePath] = None
         self.background_fade: Optional[Sequence] = None
-        self._menu_bg_anchor: Optional[NodePath] = None
 
     def show(self) -> None:
-        """Mount backdrop and enter Neural Link root."""
+        """Mount backdrop on ``render2d`` and enter Neural Link root (same as full rebuild)."""
+        self.rebuild_ui()
+
+    def rebuild_ui(self) -> None:
+        """
+        Tear down the backdrop and menu widgets, re-read aspect ratio, and rebuild at the
+        current window resolution (e.g. 16:9 after ``requestProperties``).
+        """
+        aspect_ratio = float(self.game_base.getAspectRatio())
+        if aspect_ratio <= 0.0:
+            LOGGER.warning("rebuild_ui: invalid aspect ratio, skipping.")
+            return
+
+        self.ui_manager.teardown_active_menu()
         self._release_background_only()
-        self._create_background()
-        self.ui_manager.switch_to("neural_link")
+
+        self._create_background_render2d()
+
+        if self.ui_manager.is_stack_empty():
+            self.ui_manager.switch_to("neural_link")
+        else:
+            self.ui_manager.refresh_active_menu()
 
     def cleanup(self) -> None:
         """Tear down menus, Esc bindings, and backdrop."""
@@ -65,12 +79,7 @@ class MainMenu(DirectObject, GameUIBase):
         self._release_background_only()
 
     def refresh_display_layout(self, *_args: object) -> None:
-        """
-        Debounced refresh after resize / DPI / framebuffer changes.
-
-        Recalibrates aspect ratio from the live window, rescales the aspect2d backdrop,
-        and re-anchors the active menu column to ``a2dLeftCenter`` with fixed padding.
-        """
+        """Debounced refresh after resize / DPI / framebuffer changes."""
         self.game_base.taskMgr.remove(_LAYOUT_REFRESH_TASK)
         self.game_base.taskMgr.doMethodLater(
             0.03,
@@ -83,37 +92,10 @@ class MainMenu(DirectObject, GameUIBase):
         return Task.done
 
     def _apply_display_layout_refresh(self) -> None:
-        if self._menu_bg_anchor is None or self._menu_bg_anchor.isEmpty():
-            return
-        aspect_ratio = float(self.game_base.getAspectRatio())
-        if aspect_ratio <= 0.0:
-            return
-        self._release_background_card_only()
-        self._mount_background_card_into(self._menu_bg_anchor, play_fade=False)
-        self.ui_manager.refresh_active_menu()
-
-    def _sync_background_card_to_viewport(self) -> None:
-        """Scale the backdrop so a [-1, 1]² card under ``aspect2d`` tracks window aspect."""
-        if self.background is None or self.background.isEmpty():
-            return
-        gb = self.game_base
-        ar = float(gb.getAspectRatio())
-        if ar <= 0.0:
-            return
-        parent = self.background.getParent()
-        if parent is None:
-            return
-        # Main-menu card is under ``aspect2d`` (anchor); stretch X by aspect.
-        if parent == gb.render2d:
-            self.background.setScale(1.0, 1.0, 1.0)
-            return
-        self.background.setScale(ar, 1.0, 1.0)
+        self.rebuild_ui()
 
     def _release_background_only(self) -> None:
         self._release_background_card_only()
-        if self._menu_bg_anchor is not None and not self._menu_bg_anchor.isEmpty():
-            self._menu_bg_anchor.removeNode()
-        self._menu_bg_anchor = None
 
     def _release_background_card_only(self) -> None:
         if self.background_fade is not None:
@@ -123,63 +105,41 @@ class MainMenu(DirectObject, GameUIBase):
             self.background.removeNode()
         self.background = None
 
-    def _ensure_menu_background_anchor(self) -> NodePath:
-        """Parent under ``aspect2d`` so the backdrop shares DirectGui's normalized coordinates."""
-        anchor = self.game_base.aspect2d.attachNewNode("main_menu_bg_anchor")
-        anchor.setPos(0.0, 0.0, 0.0)
-        anchor.setScale(1.0, 1.0, 1.0)
-        self._menu_bg_anchor = anchor
-        return anchor
+    def _create_background_render2d(self) -> None:
+        """Full-window NDC card on ``render2d``; ``setBin`` keeps it behind all GUI."""
+        gb = self.game_base
+        cm = CardMaker("main_menu_bg_render2d")
+        cm.setFrame(-1.0, 1.0, -1.0, 1.0)
+        card: NodePath = gb.render2d.attachNewNode(cm.generate())
+        card.setDepthWrite(False)
+        card.setDepthTest(False)
+        card.setBin("background", _BACKGROUND_BIN_SORT)
 
-    def _create_background(self) -> None:
-        anchor = self._ensure_menu_background_anchor()
-        self._mount_background_card_into(anchor, play_fade=True)
-
-    def _mount_background_card_into(self, anchor: NodePath, *, play_fade: bool) -> None:
-        menu_aspect: float = float(self.game_base.getAspectRatio())
         background_path: Optional[Path] = PathManager.resolve_image_file(
             "menu_bg.png",
             "main_menu.png",
         )
-
         if background_path is not None and background_path.exists():
-            card = textured_cover_background_card(
-                self.game_base,
-                background_path,
-                parent=anchor,
-                under_aspect2d=True,
-            )
-            if card is not None:
-                card.setPos(0.0, 0.0, 0.0)
-                self.background = card
+            panda_path = Filename.fromOsSpecific(str(background_path)).getFullpath()
+            try:
+                tex = gb.loader.loadTexture(panda_path)
+            except OSError as exc:
+                LOGGER.warning("Could not load menu background texture %s: %s", panda_path, exc)
+                tex = None
+            if tex is not None:
+                card.setTexture(tex)
             else:
-                LOGGER.warning("Menu background texture failed; using solid fallback.")
-                self.background = solid_color_menu_fallback_card(
-                    self.game_base,
-                    menu_aspect,
-                    parent=anchor,
-                    under_aspect2d=True,
-                )
-                self.background.setPos(0.0, 0.0, 0.0)
+                card.setColor(0.15, 0.15, 0.15, 1.0)
         else:
             LOGGER.warning("Menu background image not found, using color fallback.")
-            self.background = solid_color_menu_fallback_card(
-                self.game_base,
-                menu_aspect,
-                parent=anchor,
-                under_aspect2d=True,
-            )
-            self.background.setPos(0.0, 0.0, 0.0)
+            card.setColor(0.15, 0.15, 0.15, 1.0)
 
-        self.background.setTransparency(TransparencyAttrib.MAlpha)
-        if play_fade:
-            self.background.setColorScale(1, 1, 1, 0)
-            self.background_fade = self.background.colorScaleInterval(
-                1.0,
-                (1, 1, 1, 1),
-                startColorScale=(1, 1, 1, 0),
-            )
-            self.background_fade.start()
-        else:
-            self.background.setColorScale(1, 1, 1, 1)
-        self._sync_background_card_to_viewport()
+        card.setTransparency(TransparencyAttrib.MAlpha)
+        self.background = card
+        self.background.setColorScale(1, 1, 1, 0)
+        self.background_fade = self.background.colorScaleInterval(
+            1.0,
+            (1, 1, 1, 1),
+            startColorScale=(1, 1, 1, 0),
+        )
+        self.background_fade.start()
