@@ -156,17 +156,14 @@ class RacingGame(ShowBase):
         )
         self.splash_screen.start()
 
-        self.accept("aspectRatioChanged", self._on_viewport_topology_changed)
-        self.accept("window-event", self._on_viewport_topology_changed)
+        self.accept("aspectRatioChanged", self._on_aspect_ratio_changed)
+        self.accept("window-event", self._on_window_event_for_ui)
 
         self._sync_2d_after_window_props()
         self.force_ui_remap()
 
         if self.win is not None:
             self.messenger.send("window-event", [self.win])
-
-        if self.win is not None:
-            print(self.win.getProperties().getXSize(), self.win.getProperties().getYSize())
 
         if sys.platform.startswith("linux"):
             LOGGER.debug(
@@ -179,20 +176,29 @@ class RacingGame(ShowBase):
         self.taskMgr.doMethodLater(0.2, self.initial_ui_setup, _UI_SETUP_TASK)
 
     def initial_ui_setup(self, task: Task) -> object:
-        """Sync aspect2d, ensure mouse watcher is usable without trackball, refresh menu if present."""
+        """Re-bind mouse watcher to the window display region, then rebuild menu when mounted."""
         self.force_ui_remap()
-        mwn = self.mouseWatcherNode
-        if mwn is None or mwn.isEmpty():
-            self.enableMouse()
-        self.disableMouse()
-        if self.main_menu is not None:
+        self._sync_mouse_watcher_display_region()
+        self.enableMouse()
+        if hasattr(self, "main_menu") and self.main_menu:
+            print("Final UI Rebuild at native resolution...")
+            base.updateAspectRatio()
+            base.messenger.send("aspectRatioChanged")
+            self.main_menu.apply_responsive_scale()
             self.main_menu.rebuild_ui()
+            self.main_menu.show()
+        self.global_ui_refresh()
         return Task.done
+
+    def _sync_mouse_watcher_display_region(self) -> None:
+        """Keep MouseWatcher tied to the primary framebuffer region after resize or window setup."""
+        if self.win is None or not self.mouseWatcher:
+            return
+        self.mouseWatcher.node().setDisplayRegion(self.win.getDisplayRegion(0))
 
     def force_ui_remap(self) -> None:
         base = self
         aspect_ratio = base.getAspectRatio()
-        print(f"DEBUG: Remapping UI with Aspect Ratio: {aspect_ratio}")
         base.a2dTopCenter.setPos(0, 0, 1)
         base.a2dBottomCenter.setPos(0, 0, -1)
         base.a2dLeftCenter.setPos(-aspect_ratio, 0, 0)
@@ -202,8 +208,21 @@ class RacingGame(ShowBase):
         """Preserve ShowBase window bookkeeping; refresh UI after framebuffer changes."""
         super().windowEvent(win)
         self.force_ui_remap()
+        self._sync_mouse_watcher_display_region()
+        self.global_ui_refresh()
+
+    def global_ui_refresh(self) -> None:
+        """Broadcast aspect change so splash, menus, and listeners stay in sync with the framebuffer."""
+        base = self
+        aspect_ratio = base.getAspectRatio()
+        base.messenger.send("aspectRatioChanged")
+
+    def _on_aspect_ratio_changed(self, *_args: object) -> None:
         if hasattr(self, "main_menu") and self.main_menu:
             self.main_menu.refresh_display_layout()
+
+    def _on_window_event_for_ui(self, *_args: object) -> None:
+        self.global_ui_refresh()
 
     def _sync_2d_after_window_props(self) -> None:
         """
@@ -229,10 +248,6 @@ class RacingGame(ShowBase):
             xsize, ysize = self.getSize()
             if xsize > 0 and ysize > 0:
                 self.pixel2d.setScale(2.0 / xsize, 1.0, 2.0 / ysize)
-
-    def _on_viewport_topology_changed(self, *_args: object) -> None:
-        if hasattr(self, "main_menu") and self.main_menu:
-            self.main_menu.refresh_display_layout()
 
     def _load_language(self, lang_code: str) -> Dict[str, str]:
         """Load language dictionary from assets/lang with fallback."""
@@ -284,7 +299,7 @@ class RacingGame(ShowBase):
 
     def _on_settings(self) -> None:
         """Handle settings action."""
-        print("Settings clicked")
+        LOGGER.debug("Settings opened from main menu.")
 
     def _on_exit(self) -> None:
         """Handle exit action."""

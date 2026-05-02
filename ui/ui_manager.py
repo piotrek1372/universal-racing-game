@@ -61,6 +61,10 @@ class UIManager(DirectObject):
             self._current.destroy()
             self._current = None
 
+    def reanchor_active_menu(self) -> None:
+        if self._current is not None:
+            self._current.reanchor_to_aspect_markers()
+
     def refresh_active_menu(self) -> None:
         """Re-instantiate the top-of-stack menu (same key) after resolution / aspect changes."""
         if not self._stack:

@@ -29,7 +29,7 @@ _CYBER_BTN_HALF_W: float = 5.35
 _CYBER_BTN_HALF_H: float = 0.66
 _CYBER_OUTER_GLOW_PAD: float = 0.16
 _CYBER_INNER_GLOW_PAD: float = 0.07
-_CYBER_PARENT_SCALE: float = 0.078
+_CYBER_PARENT_SCALE: float = 0.0624
 _CYBER_SCALE_REF_ASPECT: float = 16.0 / 9.0
 
 # Anchor layout under `base.a2dLeftCenter` + optional `base.a2dBottomLeft`.
@@ -87,10 +87,16 @@ class BaseMenu(DirectObject, GameUIBase):
         self.ui_manager = ui_manager
         self.labels = labels
 
-        self.list_parent: NodePath = game_base.a2dLeftCenter.attachNewNode(
-            f"menu_list_{self.menu_key}"
-        )
-        self.list_parent.setPos(_LIST_ANCHOR_OFFSET_X, 0.0, 0.0)
+        shell = getattr(game_base, "main_menu_container", None)
+        if shell is not None and not shell.isEmpty():
+            list_root: NodePath = shell
+            list_offset_x = 0.0
+        else:
+            list_root = game_base.a2dLeftCenter
+            list_offset_x = _LIST_ANCHOR_OFFSET_X
+
+        self.list_parent: NodePath = list_root.attachNewNode(f"menu_list_{self.menu_key}")
+        self.list_parent.setPos(list_offset_x, 0.0, 0.0)
 
         self._footer_parent: Optional[NodePath] = None
 
@@ -103,11 +109,16 @@ class BaseMenu(DirectObject, GameUIBase):
         self._glitch_tasks: List[str] = []
 
     def reanchor_to_aspect_markers(self) -> None:
-        """Re-parent the list hub to ``a2dLeftCenter`` after ``aspect2d`` / window updates."""
+        """Re-parent the list hub under ``main_menu_container`` or ``a2dLeftCenter``."""
         if self.list_parent is None or self.list_parent.isEmpty():
             return
-        self.list_parent.reparentTo(self.game_base.a2dLeftCenter)
-        self.list_parent.setPos(_LIST_ANCHOR_OFFSET_X, 0.0, 0.0)
+        shell = getattr(self.game_base, "main_menu_container", None)
+        if shell is not None and not shell.isEmpty():
+            self.list_parent.reparentTo(shell)
+            self.list_parent.setPos(0.0, 0.0, 0.0)
+        else:
+            self.list_parent.reparentTo(self.game_base.a2dLeftCenter)
+            self.list_parent.setPos(_LIST_ANCHOR_OFFSET_X, 0.0, 0.0)
 
     def aspect_ratio(self) -> float:
         return float(self.game_base.getAspectRatio())

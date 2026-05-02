@@ -9,7 +9,7 @@ from typing import Callable, Dict, Optional
 from direct.interval.IntervalGlobal import Sequence
 from direct.showbase.DirectObject import DirectObject
 from direct.task import Task
-from panda3d.core import CardMaker, Filename, NodePath, TransparencyAttrib
+from panda3d.core import BitMask32, CardMaker, NodePath, TransparencyAttrib
 
 from core.path_manager import PathManager
 from ui.base_screen import GameUIBase
@@ -19,7 +19,8 @@ from ui.ui_manager import UIManager
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
 _LAYOUT_REFRESH_TASK = "urg-main-menu-display-refresh"
-_BACKGROUND_BIN_SORT: int = -10
+# Well below ``gui-popup`` so aspect2d DirectGui stays in front for picking/hover.
+_BACKGROUND_BIN_SORT: int = -100
 
 
 class MainMenu(DirectObject, GameUIBase):
@@ -34,6 +35,10 @@ class MainMenu(DirectObject, GameUIBase):
     ) -> None:
         DirectObject.__init__(self)
         GameUIBase.__init__(self, game_base)
+        self.container: NodePath = game_base.a2dLeftCenter.attachNewNode("main_menu_container")
+        self.container.setPos(0.15, 0, 0)
+        game_base.main_menu_container = self.container
+
         self.labels = labels
         self.profile = PlayerProfile()
         self.ui_manager = UIManager(
@@ -47,9 +52,24 @@ class MainMenu(DirectObject, GameUIBase):
         self.background: Optional[NodePath] = None
         self.background_fade: Optional[Sequence] = None
 
+    def apply_responsive_scale(self) -> None:
+        """Apply responsive scaling based on current aspect ratio."""
+        ar = self.game_base.getAspectRatio()
+        self.container.setScale(1.0 / ar * 1.77)
+        self.container.setPos(0.15, 0, 0)
+
+    def hide(self) -> None:
+        """Tear down DirectGui menus and the ``render2d`` backdrop (no stack shutdown)."""
+        self.ui_manager.teardown_active_menu()
+        self._release_background_only()
+
     def show(self) -> None:
-        """Mount backdrop on ``render2d`` and enter Neural Link root (same as full rebuild)."""
-        self.rebuild_ui()
+        """Mount a full shell via ``rebuild_ui``, or only re-sync aspect markers if already built."""
+        if self.background is None:
+            self.rebuild_ui()
+            return
+        self.game_base.force_ui_remap()
+        self.ui_manager.reanchor_active_menu()
 
     def rebuild_ui(self) -> None:
         """
@@ -61,9 +81,7 @@ class MainMenu(DirectObject, GameUIBase):
             LOGGER.warning("rebuild_ui: invalid aspect ratio, skipping.")
             return
 
-        self.ui_manager.teardown_active_menu()
-        self._release_background_only()
-
+        self.hide()
         self._create_background_render2d()
 
         if self.ui_manager.is_stack_empty():
@@ -77,9 +95,14 @@ class MainMenu(DirectObject, GameUIBase):
         self.ignoreAll()
         self.ui_manager.shutdown()
         self._release_background_only()
+        if getattr(self.game_base, "main_menu_container", None) is self.container:
+            self.game_base.main_menu_container = None
+        if self.container is not None and not self.container.isEmpty():
+            self.container.removeNode()
 
     def refresh_display_layout(self, *_args: object) -> None:
         """Debounced refresh after resize / DPI / framebuffer changes."""
+        self.apply_responsive_scale()
         self.game_base.taskMgr.remove(_LAYOUT_REFRESH_TASK)
         self.game_base.taskMgr.doMethodLater(
             0.03,
@@ -93,6 +116,7 @@ class MainMenu(DirectObject, GameUIBase):
 
     def _apply_display_layout_refresh(self) -> None:
         self.rebuild_ui()
+        self.apply_responsive_scale()
 
     def _release_background_only(self) -> None:
         self._release_background_card_only()
@@ -113,6 +137,7 @@ class MainMenu(DirectObject, GameUIBase):
         card: NodePath = gb.render2d.attachNewNode(cm.generate())
         card.setDepthWrite(False)
         card.setDepthTest(False)
+        card.setCollideMask(BitMask32.allOff())
         card.setBin("background", _BACKGROUND_BIN_SORT)
 
         background_path: Optional[Path] = PathManager.resolve_image_file(
@@ -120,7 +145,7 @@ class MainMenu(DirectObject, GameUIBase):
             "main_menu.png",
         )
         if background_path is not None and background_path.exists():
-            panda_path = Filename.fromOsSpecific(str(background_path)).getFullpath()
+            panda_path = PathManager.to_panda_path(background_path)
             try:
                 tex = gb.loader.loadTexture(panda_path)
             except OSError as exc:

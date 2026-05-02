@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
+from direct.gui.OnscreenImage import OnscreenImage
 from direct.interval.IntervalGlobal import Func, Parallel, Sequence, Wait
-from panda3d.core import AudioSound, NodePath
+from direct.showbase.DirectObject import DirectObject
+from panda3d.core import AudioSound, TransparencyAttrib
 
 from core.path_manager import PathManager
 
-from ui.base_screen import GameUIBase, fullscreen_textured_card
+from ui.base_screen import GameUIBase
 
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
+_REF_ASPECT_16_9: float = 16.0 / 9.0
 
-class SplashScreen(GameUIBase):
+_BACKGROUND_BIN_SORT: int = -100
+
+
+class SplashScreen(GameUIBase, DirectObject):
     """Create and run the splash sequence with optional background audio."""
 
     def __init__(
@@ -26,23 +32,82 @@ class SplashScreen(GameUIBase):
         on_complete: Callable[[], None],
         soundtrack_name: str = "Tarmac_Predator.mp3",
     ) -> None:
-        super().__init__(game_base)
+        GameUIBase.__init__(self, game_base)
+        DirectObject.__init__(self)
         self.on_complete = on_complete
         self.sequence: Optional[Sequence] = None
         self.bg_music: Optional[AudioSound] = self._load_background_music(soundtrack_name)
+        self._splash_images: List[OnscreenImage] = []
 
     def start(self) -> None:
         """Start splash sequence."""
+        self._splash_images.clear()
+        self.accept("window-event", self._on_splash_viewport_changed)
+        self.accept("aspectRatioChanged", self._on_splash_viewport_changed)
         self.sequence = self._build_sequence()
         self.sequence.start()
 
     def cleanup(self) -> None:
         """Stop sequence and audio resources."""
+        self.ignoreAll()
         if self.sequence is not None:
             self.sequence.finish()
             self.sequence = None
         if self.bg_music is not None:
             self.bg_music.stop()
+        self._splash_images.clear()
+
+    def _on_splash_viewport_changed(self, *_args: object) -> None:
+        for img in self._splash_images:
+            if img is None or img.isEmpty():
+                continue
+            self._apply_render2d_cover_scale(img)
+
+    @staticmethod
+    def _apply_render2d_cover_scale(image: OnscreenImage) -> None:
+        """16:9 art scaled to cover render2d without stretching (axis-prioritized scale)."""
+        gb = image.getPythonTag("splash_game_base")
+        if gb is None:
+            return
+        ar = float(gb.getAspectRatio())
+        if ar <= 0.0:
+            ar = _REF_ASPECT_16_9
+        ref = _REF_ASPECT_16_9
+        if ar > ref:
+            image.setScale(ar / ref, 1.0, 1.0)
+        else:
+            image.setScale(1.0, 1.0, ref / ar)
+        image.setPos(0, 0, 0)
+
+    def _create_splash(self, image_name: str) -> Optional[OnscreenImage]:
+        """Fullscreen splash using ``OnscreenImage`` under ``render2d``."""
+        image_path: Optional[Path] = PathManager.resolve_image_file(image_name)
+        if image_path is None:
+            LOGGER.warning("Splash image missing: %s", image_name)
+            return None
+
+        panda_path = PathManager.to_panda_path(image_path)
+        try:
+            img = OnscreenImage(
+                image=panda_path,
+                parent=self.game_base.render2d,
+                pos=(0, 0, 0),
+            )
+        except OSError as exc:
+            LOGGER.warning("Could not load splash image %s: %s", image_path, exc)
+            return None
+
+        img.setTransparency(TransparencyAttrib.MAlpha)
+        img.setColorScale(1, 1, 1, 0)
+        img.setBin("background", _BACKGROUND_BIN_SORT)
+        img.setDepthWrite(False)
+        img.setDepthTest(False)
+        img.setPythonTag("splash_game_base", self.game_base)
+
+        self._apply_render2d_cover_scale(img)
+        self._splash_images.append(img)
+
+        return img
 
     def _load_background_music(self, filename: str) -> Optional[AudioSound]:
         """Load soundtrack from assets/audio."""
@@ -66,18 +131,9 @@ class SplashScreen(GameUIBase):
         music.setLoop(False)
         return music
 
-    def _create_splash(self, image_name: str) -> Optional[NodePath]:
-        """Create one full-screen splash card with alpha enabled."""
-        image_path: Optional[Path] = PathManager.resolve_image_file(image_name)
-        if image_path is None:
-            LOGGER.warning("Splash image missing: %s", image_name)
-            return None
-
-        return fullscreen_textured_card(self.game_base, image_path, f"splash_{image_name}")
-
     def _build_sequence(self) -> Sequence:
         """Build the splash sequence and transition to menu."""
-        splash_nodes: list[NodePath] = []
+        splash_nodes: list[OnscreenImage] = []
         for image_name in ("splash1.png", "splash2.png", "splash3.png"):
             splash = self._create_splash(image_name)
             if splash is not None and not splash.isEmpty():
@@ -85,10 +141,10 @@ class SplashScreen(GameUIBase):
 
         if not splash_nodes:
             LOGGER.warning("No splash images available, proceeding to main menu.")
-            return Sequence(Func(self.on_complete))
+            return Sequence(Func(self.ignoreAll), Func(self.on_complete))
 
         sequence: Sequence = Sequence()
-        first_splash: NodePath = splash_nodes[0]
+        first_splash: OnscreenImage = splash_nodes[0]
         music_start = Func(self.bg_music.play) if self.bg_music is not None else Wait(0.0)
 
         sequence.append(Wait(0.75))
@@ -110,7 +166,7 @@ class SplashScreen(GameUIBase):
                 startColorScale=(1, 1, 1, 1),
             )
         )
-        sequence.append(Func(first_splash.removeNode))
+        sequence.append(Func(first_splash.destroy))
 
         for splash in splash_nodes[1:]:
             sequence.append(
@@ -128,7 +184,8 @@ class SplashScreen(GameUIBase):
                     startColorScale=(1, 1, 1, 1),
                 )
             )
-            sequence.append(Func(splash.removeNode))
+            sequence.append(Func(splash.destroy))
 
+        sequence.append(Func(self.ignoreAll))
         sequence.append(Func(self.on_complete))
         return sequence
