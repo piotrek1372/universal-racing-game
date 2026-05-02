@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from direct.gui.DirectButton import DirectButton
+from direct.gui.DirectFrame import DirectFrame
+from direct.gui.DirectGui import DGG
 from direct.gui.OnscreenImage import OnscreenImage
 from direct.showbase.DirectObject import DirectObject
 from direct.showbase.MessengerGlobal import messenger
 from direct.interval.IntervalGlobal import Sequence
-from panda3d.core import NodePath, TransparencyAttrib
+from panda3d.core import NodePath, TextNode, TransparencyAttrib
 
 from core.path_manager import PathManager
 
@@ -19,6 +21,19 @@ from ui.base_screen import GameUIBase, solid_color_menu_fallback_card
 
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
+
+# Aspect2d layout (local units; scaled by _CYBER_PARENT_SCALE).
+_CYBER_BTN_HALF_W: float = 5.35
+_CYBER_BTN_HALF_H: float = 0.66
+_CYBER_OUTER_GLOW_PAD: float = 0.16
+_CYBER_INNER_GLOW_PAD: float = 0.07
+_CYBER_PARENT_SCALE: float = 0.078
+_CYBER_LEFT_MARGIN: float = 0.54
+_CYBER_VERTICAL_STEP: float = 0.168
+_CYBER_ROW_TOP_Z: float = 0.13
+
+_BASE_FRAME_RGBA: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.6)
+_ROLL_FRAME_RGBA: Tuple[float, float, float, float] = (0.02, 0.12, 0.14, 0.72)
 
 
 class MainMenu(DirectObject, GameUIBase):
@@ -40,6 +55,10 @@ class MainMenu(DirectObject, GameUIBase):
         self.background: Optional[OnscreenImage | NodePath] = None
         self.background_fade: Optional[Sequence] = None
         self.buttons: dict[str, DirectButton] = {}
+        self._cyber_rows: List[Tuple[NodePath, DirectFrame, DirectFrame, DirectButton]] = []
+        self._cyber_font_node = None
+        self._hover_sfx = None
+        self._hover_sfx_absent: bool = False
 
     def show(self) -> None:
         """Create menu background and buttons and bind events."""
@@ -62,9 +81,189 @@ class MainMenu(DirectObject, GameUIBase):
         elif isinstance(self.background, NodePath):
             self.background.removeNode()
             self.background = None
-        for button in self.buttons.values():
-            button.destroy()
+
+        for _parent, outer, inner, btn in self._cyber_rows:
+            btn.destroy()
+            inner.destroy()
+            outer.destroy()
+            _parent.removeNode()
+        self._cyber_rows.clear()
+
         self.buttons.clear()
+
+    def _resolve_cyber_font(self):
+        """Prefer Orbitron / Rajdhani; fallback to built-in sans (caller uppercases text)."""
+        if self._cyber_font_node is not None:
+            return self._cyber_font_node
+
+        for candidate in (
+            "Orbitron-Bold.ttf",
+            "Orbitron-Regular.ttf",
+            "Rajdhani-Bold.ttf",
+            "Rajdhani-Regular.ttf",
+            "DejaVuSans.ttf",
+            "NotoSans-Regular.ttf",
+        ):
+            font_path: Optional[Path] = PathManager.resolve_font_file(candidate)
+            if font_path is None:
+                continue
+            try:
+                self._cyber_font_node = self.game_base.loader.loadFont(str(font_path))
+                return self._cyber_font_node
+            except OSError:
+                continue
+
+        LOGGER.info("No sci-fi font under assets/fonts; using default with uppercase labels.")
+        self._cyber_font_node = None
+        return None
+
+    def _ensure_hover_sound(self):
+        """Lazy-load UI hover SFX when assets/audio/UI_hover.wav exists."""
+        if self._hover_sfx is not None:
+            return self._hover_sfx
+        if self._hover_sfx_absent:
+            return None
+
+        path = PathManager.resolve_audio_file("UI_hover.wav")
+        if path is None:
+            self._hover_sfx_absent = True
+            return None
+        try:
+            self._hover_sfx = self.game_base.loader.loadSfx(str(path))
+            self._hover_sfx.setVolume(0.35)
+        except OSError as exc:
+            LOGGER.warning("Could not load UI_hover.wav: %s", exc)
+            self._hover_sfx_absent = True
+            self._hover_sfx = None
+        return self._hover_sfx
+
+    def _glow_alpha_boost(self) -> float:
+        """Slightly stronger halo when a simplepbr-style pipeline is present (optional bloom)."""
+        if getattr(self.game_base, "simplepbr", None) is not None:
+            return 0.06
+        return 0.0
+
+    def _cyber_hover_enter(self, parent: NodePath) -> None:
+        base_scale = float(parent.getPythonTag("cyber_base_scale"))
+        parent.setScale(base_scale * 1.05)
+        sfx = self._ensure_hover_sound()
+        if sfx is not None:
+            sfx.play()
+
+    def _cyber_hover_exit(self, parent: NodePath) -> None:
+        base_scale = float(parent.getPythonTag("cyber_base_scale"))
+        parent.setScale(base_scale)
+
+    def create_cyber_button(
+        self,
+        button_key: str,
+        text: str,
+        command: Callable[[], None],
+        pos: Tuple[float, float, float],
+        *,
+        accent: str = "cyan",
+    ) -> DirectButton:
+        """
+        Build a neon-outlined cyber button under aspect2d with layered glow and hover feedback.
+
+        Visuals use DirectGui four-way frameColor / text_fg for normal, pressed, rollover, disabled.
+        """
+        display_text = text.upper()
+        font = self._resolve_cyber_font()
+
+        neon: Tuple[float, float, float, float]
+        neon_bright: Tuple[float, float, float, float]
+        glow_rgb: Tuple[float, float, float]
+
+        if accent.lower() == "magenta":
+            neon = (1.0, 0.0, 1.0, 1.0)
+            neon_bright = (1.0, 0.35, 1.0, 1.0)
+            glow_rgb = (1.0, 0.0, 1.0)
+        else:
+            neon = (0.0, 1.0, 1.0, 1.0)
+            neon_bright = (0.35, 1.0, 1.0, 1.0)
+            glow_rgb = (0.0, 1.0, 1.0)
+
+        boost = self._glow_alpha_boost()
+        outer_alpha = min(0.22 + boost, 0.38)
+        inner_alpha = min(0.14 + boost, 0.28)
+
+        root = self.game_base.aspect2d.attachNewNode(f"cyber_btn_{button_key}")
+        root.setPos(pos[0], pos[1], pos[2])
+        root.setPythonTag("cyber_base_scale", _CYBER_PARENT_SCALE)
+        root.setScale(_CYBER_PARENT_SCALE)
+
+        hw = _CYBER_BTN_HALF_W
+        hh = _CYBER_BTN_HALF_H
+
+        outer_glow = DirectFrame(
+            frameSize=(
+                -hw - _CYBER_OUTER_GLOW_PAD,
+                hw + _CYBER_OUTER_GLOW_PAD,
+                -hh - _CYBER_OUTER_GLOW_PAD,
+                hh + _CYBER_OUTER_GLOW_PAD,
+            ),
+            frameColor=(glow_rgb[0], glow_rgb[1], glow_rgb[2], outer_alpha * 0.35),
+            relief=DGG.FLAT,
+            parent=root,
+            sort=-2,
+        )
+        outer_glow.setTransparency(TransparencyAttrib.MAlpha)
+
+        inner_glow = DirectFrame(
+            frameSize=(
+                -hw - _CYBER_INNER_GLOW_PAD,
+                hw + _CYBER_INNER_GLOW_PAD,
+                -hh - _CYBER_INNER_GLOW_PAD,
+                hh + _CYBER_INNER_GLOW_PAD,
+            ),
+            frameColor=(glow_rgb[0], glow_rgb[1], glow_rgb[2], inner_alpha),
+            relief=DGG.FLAT,
+            parent=root,
+            sort=-1,
+        )
+        inner_glow.setTransparency(TransparencyAttrib.MAlpha)
+
+        solid_press = (neon[0], neon[1], neon[2], 0.96)
+
+        frame_colors = [
+            _BASE_FRAME_RGBA,
+            solid_press,
+            _ROLL_FRAME_RGBA,
+            (0.12, 0.12, 0.12, 0.45),
+        ]
+        text_colors = [
+            neon,
+            neon_bright,
+            (1.0, 1.0, 1.0, 1.0),
+            (0.35, 0.35, 0.35, 0.65),
+        ]
+
+        btn = DirectButton(
+            text=display_text,
+            text_align=TextNode.ACenter,
+            text_scale=0.62,
+            text_font=font,
+            text_fg=text_colors,
+            frameSize=(-hw, hw, -hh, hh),
+            frameColor=frame_colors,
+            relief=DGG.RIDGE,
+            borderWidth=(0.012, 0.012),
+            pad=(0.28, 0.14),
+            pressEffect=False,
+            command=command,
+            parent=root,
+            sort=0,
+        )
+        btn.setTransparency(TransparencyAttrib.MAlpha)
+
+        btn.bind(DGG.ENTER, lambda _e, p=root: self._cyber_hover_enter(p))
+        btn.bind(DGG.EXIT, lambda _e, p=root: self._cyber_hover_exit(p))
+
+        self._cyber_rows.append((root, outer_glow, inner_glow, btn))
+        self.buttons[button_key] = btn
+        btn.show()
+        return btn
 
     def _create_background(self) -> None:
         """Create menu background under render2d with back sorting."""
@@ -96,7 +295,7 @@ class MainMenu(DirectObject, GameUIBase):
         self.background_fade.start()
 
     def _create_buttons(self) -> None:
-        """Create DirectButton widgets in aspect2d and ensure visibility."""
+        """Create cyber-styled DirectButtons in aspect2d along the left column."""
         mouse_watcher = self.game_base.mouseWatcherNode
         is_active: bool = bool(
             mouse_watcher
@@ -106,20 +305,21 @@ class MainMenu(DirectObject, GameUIBase):
         if not is_active:
             LOGGER.warning("mouseWatcherNode is not active. Menu input may not work.")
 
-        self.buttons["settings"] = DirectButton(
-            text=self.labels.get("ui_settings", "Settings"),
-            parent=self.game_base.aspect2d,
-            scale=0.08,
-            pos=(0.0, 0.0, 0.15),
-            command=lambda: messenger.send("menu-settings"),
-        )
-        self.buttons["exit"] = DirectButton(
-            text=self.labels.get("ui_exit", "Exit"),
-            parent=self.game_base.aspect2d,
-            scale=0.08,
-            pos=(0.0, 0.0, -0.05),
-            command=lambda: messenger.send("menu-exit"),
-        )
+        menu_aspect: float = self.aspect_ratio()
+        left_x: float = -menu_aspect + _CYBER_LEFT_MARGIN
+        z_top: float = _CYBER_ROW_TOP_Z
 
-        for button in self.buttons.values():
-            button.show()
+        self.create_cyber_button(
+            "settings",
+            self.labels.get("ui_settings", "Settings"),
+            lambda: messenger.send("menu-settings"),
+            (left_x, 0.0, z_top),
+            accent="cyan",
+        )
+        self.create_cyber_button(
+            "exit",
+            self.labels.get("ui_exit", "Exit"),
+            lambda: messenger.send("menu-exit"),
+            (left_x, 0.0, z_top - _CYBER_VERTICAL_STEP),
+            accent="magenta",
+        )
