@@ -26,7 +26,6 @@ from panda3d.core import (
 loadPrcFileData("", "aspect-ratio 0")
 loadPrcFileData("", "view-unused-space #f")
 
-# Populated by _apply_engine_prc_before_showbase for post-init borderless sizing.
 _ENGINE_PRC_INCLUDED_WIN_SIZE: bool = False
 _ENGINE_PROBE_DIMENSIONS: Optional[tuple[int, int]] = None
 
@@ -63,14 +62,14 @@ def _apply_engine_prc_before_showbase() -> None:
     """
     Borderless-friendly PRC: no exclusive fullscreen; optional win-size only when known.
 
-    If the pipe reports 0×0, omit ``win-size`` so Panda picks safe defaults; resize after open.
+    If the pipe reports 0×0, omit ``win-size`` so Panda picks safe defaults;
+    resize after open.
     """
     global _ENGINE_PRC_INCLUDED_WIN_SIZE, _ENGINE_PROBE_DIMENSIONS
 
     dims = _probe_pipe_display_dimensions()
     _ENGINE_PROBE_DIMENSIONS = dims
 
-    # aspect-ratio 0: do not lock to a fixed framebuffer aspect (prevents letterboxing).
     lines: list[str] = [
         "aspect-ratio 0",
         "view-unused-space #f",
@@ -111,15 +110,20 @@ LOGGER: logging.Logger = logging.getLogger(__name__)
 _POST_INIT_TASK = "post-init"
 _UI_SETUP_TASK = "ui-setup"
 
+# How long to wait (seconds) for the OS to finalise window geometry before
+# querying the real framebuffer size in ``initial_ui_setup``.
+_WINDOW_SETTLE_DELAY: float = 0.25
+
 
 class RacingGame(ShowBase):
     """Initialize the engine and orchestrate splash/menu states."""
 
     def __init__(self) -> None:
         super().__init__()
-        base = self
-        base.cam2d.node().getDisplayRegion(0).setDimensions(0, 1, 0, 1)
 
+        # ------------------------------------------------------------------ #
+        # 1. Window setup — size, position, decorations                       #
+        # ------------------------------------------------------------------ #
         wp = WindowProperties()
         wp.setUndecorated(True)
         wp.setFullscreen(False)
@@ -142,11 +146,19 @@ class RacingGame(ShowBase):
         if self.win is not None:
             self.win.requestProperties(wp)
 
+        # ------------------------------------------------------------------ #
+        # 2. Immediately sync 2D coordinate system to the requested size      #
+        #    (requestProperties is asynchronous; this gives a best-first      #
+        #    approximation that ``initial_ui_setup`` will correct later).     #
+        # ------------------------------------------------------------------ #
+        self._sync_2d_to_window()
         self.force_ui_remap()
 
         self.disableMouse()
 
-        # Shell UI first so ``main_menu`` exists before any ``window-event`` / 2-D sync side effects.
+        # ------------------------------------------------------------------ #
+        # 3. Language + splash                                                #
+        # ------------------------------------------------------------------ #
         self.lang: Dict[str, str] = self._load_language("en")
         self.main_menu: MainMenu | None = None
         self.splash_screen = SplashScreen(
@@ -156,98 +168,145 @@ class RacingGame(ShowBase):
         )
         self.splash_screen.start()
 
+        # ------------------------------------------------------------------ #
+        # 4. Event hooks                                                       #
+        # ------------------------------------------------------------------ #
         self.accept("aspectRatioChanged", self._on_aspect_ratio_changed)
         self.accept("window-event", self._on_window_event_for_ui)
 
-        self._sync_2d_after_window_props()
-        self.force_ui_remap()
-
+        # Re-broadcast so listeners (splash cover scale, etc.) run now.
         if self.win is not None:
             self.messenger.send("window-event", [self.win])
 
         if sys.platform.startswith("linux"):
-            LOGGER.debug(
-                "Linux HiDPI: GDK_SCALE / GDK_DPI_SCALE affect toolkit scaling when set before launch; "
-                "want-high-dpi is enabled in engine PRC."
-            )
             os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 
+        # ------------------------------------------------------------------ #
+        # 5. Deferred UI setup — waits for the OS to honour the resize       #
+        # ------------------------------------------------------------------ #
         self.taskMgr.remove(_UI_SETUP_TASK)
-        self.taskMgr.doMethodLater(0.2, self.initial_ui_setup, _UI_SETUP_TASK)
+        self.taskMgr.doMethodLater(_WINDOW_SETTLE_DELAY, self.initial_ui_setup, _UI_SETUP_TASK)
+
+    # ---------------------------------------------------------------------- #
+    # Deferred initialisation                                                  #
+    # ---------------------------------------------------------------------- #
 
     def initial_ui_setup(self, task: Task) -> object:
-        """Re-bind mouse watcher to the window display region, then rebuild menu when mounted."""
+        """
+        Runs after the OS has (likely) applied the resize request.
+
+        Steps:
+          1. Re-sync 2D nodes from the actual framebuffer.
+          2. Re-map aspect2d anchor nodes.
+          3. Re-bind mouseWatcher to the primary DisplayRegion.
+          4. Enable mouse picking.
+          5. Rebuild the main menu if already mounted.
+        """
+        # --- 1 & 2: sync coordinate system to real window size ---
+        self._sync_2d_to_window()
         self.force_ui_remap()
-        self._sync_mouse_watcher_display_region()
+
+        # --- 3: broadcast so all listeners recalculate layout ---
+        self.updateAspectRatio()
+        self.messenger.send("aspectRatioChanged")
+
+        # --- 4: fix mouseWatcher → DisplayRegion link ---
+        self._bind_mouse_watcher_to_display_region()
         self.enableMouse()
-        if hasattr(self, "main_menu") and self.main_menu:
-            print("Final UI Rebuild at native resolution...")
-            base.updateAspectRatio()
-            base.messenger.send("aspectRatioChanged")
+
+        # --- 5: rebuild menu if it was already created (rare path) ---
+        if self.main_menu is not None:
+            LOGGER.debug("initial_ui_setup: rebuilding menu at native resolution.")
             self.main_menu.apply_responsive_scale()
             self.main_menu.rebuild_ui()
             self.main_menu.show()
+
         self.global_ui_refresh()
         return Task.done
 
-    def _sync_mouse_watcher_display_region(self) -> None:
-        """Keep MouseWatcher tied to the primary framebuffer region after resize or window setup."""
-        if self.win is None or not self.mouseWatcher:
-            return
-        self.mouseWatcher.node().setDisplayRegion(self.win.getDisplayRegion(0))
+    # ---------------------------------------------------------------------- #
+    # Core helpers                                                             #
+    # ---------------------------------------------------------------------- #
 
     def force_ui_remap(self) -> None:
-        base = self
-        aspect_ratio = base.getAspectRatio()
-        base.a2dTopCenter.setPos(0, 0, 1)
-        base.a2dBottomCenter.setPos(0, 0, -1)
-        base.a2dLeftCenter.setPos(-aspect_ratio, 0, 0)
-        base.a2dRightCenter.setPos(aspect_ratio, 0, 0)
+        """
+        Recalculate ``a2dLeftCenter`` / ``a2dRightCenter`` / ``a2dTopCenter`` /
+        ``a2dBottomCenter`` from the *current* aspect ratio.
 
-    def windowEvent(self, win) -> None:  # type: ignore[override]
-        """Preserve ShowBase window bookkeeping; refresh UI after framebuffer changes."""
-        super().windowEvent(win)
-        self.force_ui_remap()
-        self._sync_mouse_watcher_display_region()
-        self.global_ui_refresh()
+        Called after every resize so anchor-parented menus move to the correct
+        screen edge without rebuilding the widget tree.
+        """
+        ar = self.getAspectRatio()
+        if ar <= 0.0:
+            return
+        self.a2dTopCenter.setPos(0, 0, 1)
+        self.a2dBottomCenter.setPos(0, 0, -1)
+        self.a2dLeftCenter.setPos(-ar, 0, 0)
+        self.a2dRightCenter.setPos(ar, 0, 0)
+        self.a2dTopLeft.setPos(-ar, 0, 1)
+        self.a2dTopRight.setPos(ar, 0, 1)
+        self.a2dBottomLeft.setPos(-ar, 0, -1)
+        self.a2dBottomRight.setPos(ar, 0, -1)
 
     def global_ui_refresh(self) -> None:
-        """Broadcast aspect change so splash, menus, and listeners stay in sync with the framebuffer."""
-        base = self
-        aspect_ratio = base.getAspectRatio()
-        base.messenger.send("aspectRatioChanged")
+        """Broadcast aspect change so splash, menus and listeners stay in sync."""
+        self.force_ui_remap()
+        self.messenger.send("aspectRatioChanged")
+
+    def _sync_2d_to_window(self) -> None:
+        """
+        Apply ``adjustWindowAspectRatio`` and ``pixel2d`` scale from the real
+        (or requested) framebuffer dimensions.
+
+        This mirrors what ShowBase.windowEvent does, but can be called at any
+        time rather than waiting for the next Panda event loop tick.
+        """
+        if self.win is None:
+            return
+
+        ar = self.getAspectRatio()
+        if ar and ar > 0:
+            self.adjustWindowAspectRatio(ar)
+
+        # pixel2d scale: 2 pixels per unit in each axis.
+        xsize, ysize = self.getSize()
+        if xsize > 0 and ysize > 0:
+            self.pixel2d.setScale(2.0 / xsize, 1.0, 2.0 / ysize)
+
+    def _bind_mouse_watcher_to_display_region(self) -> None:
+        """
+        Explicitly associate the MouseWatcher node with the primary window
+        DisplayRegion.  Without this, after a resolution shift the watcher
+        can report ``isActive() == False`` and mouse clicks miss buttons.
+        """
+        if self.win is None or self.mouseWatcher is None:
+            return
+        dr = self.win.getDisplayRegion(0)
+        if dr is not None:
+            self.mouseWatcher.node().setDisplayRegion(dr)
+
+    # ---------------------------------------------------------------------- #
+    # Window / aspect event handlers                                           #
+    # ---------------------------------------------------------------------- #
+
+    def windowEvent(self, win) -> None:  # type: ignore[override]
+        """Preserve ShowBase bookkeeping; refresh UI after framebuffer changes."""
+        super().windowEvent(win)
+        self._sync_2d_to_window()
+        self.force_ui_remap()
+        self._bind_mouse_watcher_to_display_region()
+        self.global_ui_refresh()
 
     def _on_aspect_ratio_changed(self, *_args: object) -> None:
-        if hasattr(self, "main_menu") and self.main_menu:
+        if self.main_menu is not None:
             self.main_menu.refresh_display_layout()
 
     def _on_window_event_for_ui(self, *_args: object) -> None:
         self.global_ui_refresh()
 
-    def _sync_2d_after_window_props(self) -> None:
-        """
-        Match ShowBase.windowEvent: apply aspect2d / pixel2d from the real window size.
-
-        requestProperties alone may not run windowEvent immediately; without this,
-        aspect2d stays at the default (~800×600) while the framebuffer is larger.
-
-        Does not emit ``window-event``; callers (e.g. ``__init__``) send once after setup.
-        """
-        if self.win is None:
-            return
-        ar = self.getAspectRatio()
-        if ar and ar > 0:
-            self.adjustWindowAspectRatio(ar)
-        if self.win.hasSize() and self.win.getSbsLeftYSize() != 0:
-            self.pixel2d.setScale(
-                2.0 / self.win.getSbsLeftXSize(),
-                1.0,
-                2.0 / self.win.getSbsLeftYSize(),
-            )
-        else:
-            xsize, ysize = self.getSize()
-            if xsize > 0 and ysize > 0:
-                self.pixel2d.setScale(2.0 / xsize, 1.0, 2.0 / ysize)
+    # ---------------------------------------------------------------------- #
+    # Language                                                                 #
+    # ---------------------------------------------------------------------- #
 
     def _load_language(self, lang_code: str) -> Dict[str, str]:
         """Load language dictionary from assets/lang with fallback."""
@@ -279,8 +338,17 @@ class RacingGame(ShowBase):
         )
         return fallback_lang.copy()
 
+    # ---------------------------------------------------------------------- #
+    # State transitions                                                        #
+    # ---------------------------------------------------------------------- #
+
     def _on_splash_complete(self) -> None:
-        """Transition from splash flow to main menu (UI shown next frame — window/input ready)."""
+        """
+        Transition from splash to main menu.
+
+        Deferred by one short task so the splash teardown finishes fully
+        before the menu widget tree is constructed.
+        """
         self.main_menu = MainMenu(
             game_base=self,
             labels=self.lang,
@@ -288,21 +356,30 @@ class RacingGame(ShowBase):
             on_exit=self._on_exit,
         )
         self.taskMgr.remove(_POST_INIT_TASK)
-        self.taskMgr.doMethodLater(0.1, self.post_init_setup, _POST_INIT_TASK)
+        self.taskMgr.doMethodLater(0.1, self._post_splash_build, _POST_INIT_TASK)
 
-    def post_init_setup(self, task: Task) -> object:
-        """After ``requestProperties`` / aspect sync, rebuild menu UI at the real aspect ratio."""
-        if self.main_menu is not None:
-            self.main_menu.rebuild_ui()
-            self.force_ui_remap()
+    def _post_splash_build(self, task: Task) -> object:
+        """
+        After the splash teardown frame, rebuild the menu at the real
+        aspect ratio (the window may have been resized during splash).
+        """
+        if self.main_menu is None:
+            return Task.done
+
+        # Ensure coordinate system is up-to-date before building widgets.
+        self._sync_2d_to_window()
+        self.force_ui_remap()
+        self.updateAspectRatio()
+
+        self.main_menu.apply_responsive_scale()
+        self.main_menu.rebuild_ui()
+        self.force_ui_remap()
         return Task.done
 
     def _on_settings(self) -> None:
-        """Handle settings action."""
         LOGGER.debug("Settings opened from main menu.")
 
     def _on_exit(self) -> None:
-        """Handle exit action."""
         self.cleanup()
         self.userExit()
 
