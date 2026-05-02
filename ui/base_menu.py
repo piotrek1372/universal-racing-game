@@ -33,7 +33,7 @@ _CYBER_PARENT_SCALE: float = 0.078
 _CYBER_SCALE_REF_ASPECT: float = 16.0 / 9.0
 
 # Anchor layout under `base.a2dLeftCenter` + optional `base.a2dBottomLeft`.
-_LIST_ANCHOR_OFFSET_X: float = 0.1
+_LIST_ANCHOR_OFFSET_X: float = 0.15
 _LIST_ROW_START_Z: float = 0.5
 _LIST_ROW_STEP: float = 0.15
 _SECTION_TITLE_GAP_Z: float = 0.14

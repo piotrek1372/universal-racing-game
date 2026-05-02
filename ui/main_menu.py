@@ -65,7 +65,12 @@ class MainMenu(DirectObject, GameUIBase):
         self._release_background_only()
 
     def refresh_display_layout(self, *_args: object) -> None:
-        """Debounced refresh after resize / DPI / framebuffer changes (see `window-event`)."""
+        """
+        Debounced refresh after resize / DPI / framebuffer changes.
+
+        Recalibrates aspect ratio from the live window, rescales the aspect2d backdrop,
+        and re-anchors the active menu column to ``a2dLeftCenter`` with fixed padding.
+        """
         self.game_base.taskMgr.remove(_LAYOUT_REFRESH_TASK)
         self.game_base.taskMgr.doMethodLater(
             0.03,
@@ -80,9 +85,29 @@ class MainMenu(DirectObject, GameUIBase):
     def _apply_display_layout_refresh(self) -> None:
         if self._menu_bg_anchor is None or self._menu_bg_anchor.isEmpty():
             return
+        aspect_ratio = float(self.game_base.getAspectRatio())
+        if aspect_ratio <= 0.0:
+            return
         self._release_background_card_only()
         self._mount_background_card_into(self._menu_bg_anchor, play_fade=False)
         self.ui_manager.refresh_active_menu()
+
+    def _sync_background_card_to_viewport(self) -> None:
+        """Scale the backdrop so a [-1, 1]² card under ``aspect2d`` tracks window aspect."""
+        if self.background is None or self.background.isEmpty():
+            return
+        gb = self.game_base
+        ar = float(gb.getAspectRatio())
+        if ar <= 0.0:
+            return
+        parent = self.background.getParent()
+        if parent is None:
+            return
+        # Main-menu card is under ``aspect2d`` (anchor); stretch X by aspect.
+        if parent == gb.render2d:
+            self.background.setScale(1.0, 1.0, 1.0)
+            return
+        self.background.setScale(ar, 1.0, 1.0)
 
     def _release_background_only(self) -> None:
         self._release_background_card_only()
@@ -157,3 +182,4 @@ class MainMenu(DirectObject, GameUIBase):
             self.background_fade.start()
         else:
             self.background.setColorScale(1, 1, 1, 1)
+        self._sync_background_card_to_viewport()

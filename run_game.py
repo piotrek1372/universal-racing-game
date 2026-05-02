@@ -67,6 +67,7 @@ def _apply_engine_prc_before_showbase() -> None:
     dims = _probe_pipe_display_dimensions()
     _ENGINE_PROBE_DIMENSIONS = dims
 
+    # aspect-ratio 0: do not lock to a fixed framebuffer aspect (prevents letterboxing).
     lines: list[str] = [
         "aspect-ratio 0",
         "window-title Universal Racing Game // Neural Link",
@@ -113,10 +114,8 @@ class RacingGame(ShowBase):
         super().__init__()
         self.disableMouse()
 
-        self._configure_window_after_open()
-
+        # Shell UI first so ``main_menu`` exists before any ``window-event`` / 2-D sync side effects.
         self.lang: Dict[str, str] = self._load_language("en")
-
         self.main_menu: MainMenu | None = None
         self.splash_screen = SplashScreen(
             game_base=self,
@@ -128,13 +127,16 @@ class RacingGame(ShowBase):
         self.accept("aspectRatioChanged", self._on_viewport_topology_changed)
         self.accept("window-event", self._on_viewport_topology_changed)
 
-        # After UI shell exists: synthetic window-event must not run before ``main_menu`` attr exists.
+        self._configure_window_after_open()
         self._sync_2d_after_window_props()
+
+        if self.win is not None:
+            self.messenger.send("window-event", [self.win])
 
     def windowEvent(self, win) -> None:  # type: ignore[override]
         """Preserve ShowBase window bookkeeping; refresh UI after framebuffer changes."""
         super().windowEvent(win)
-        if hasattr(self, "main_menu") and self.main_menu is not None:
+        if hasattr(self, "main_menu") and self.main_menu:
             self.main_menu.refresh_display_layout()
 
     def _sync_2d_after_window_props(self) -> None:
@@ -143,6 +145,8 @@ class RacingGame(ShowBase):
 
         requestProperties alone may not run windowEvent immediately; without this,
         aspect2d stays at the default (~800×600) while the framebuffer is larger.
+
+        Does not emit ``window-event``; callers (e.g. ``__init__``) send once after setup.
         """
         if self.win is None:
             return
@@ -159,10 +163,9 @@ class RacingGame(ShowBase):
             xsize, ysize = self.getSize()
             if xsize > 0 and ysize > 0:
                 self.pixel2d.setScale(2.0 / xsize, 1.0, 2.0 / ysize)
-        self.messenger.send("window-event", [self.win])
 
     def _on_viewport_topology_changed(self, *_args: object) -> None:
-        if hasattr(self, "main_menu") and self.main_menu is not None:
+        if hasattr(self, "main_menu") and self.main_menu:
             self.main_menu.refresh_display_layout()
 
     def _resolve_borderless_dimensions(self) -> Optional[tuple[int, int]]:
