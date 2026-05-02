@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Sequence as TypingSequence
 
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectFrame import DirectFrame
@@ -34,6 +35,28 @@ _CYBER_ROW_TOP_Z: float = 0.13
 
 _BASE_FRAME_RGBA: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.6)
 _ROLL_FRAME_RGBA: Tuple[float, float, float, float] = (0.02, 0.12, 0.14, 0.72)
+
+
+def _gui_rgba4(
+    color: Union[
+        Tuple[float, float, float, float],
+        TypingSequence[float],
+        Mapping[str, float],
+    ],
+) -> Tuple[float, float, float, float]:
+    """Normalize GUI colors to a flat (R, G, B, A) tuple of real floats for DirectGui."""
+    if isinstance(color, Mapping):
+        r = float(color.get("r", color.get("red", 0.0)))
+        g = float(color.get("g", color.get("green", 0.0)))
+        b = float(color.get("b", color.get("blue", 0.0)))
+        a = float(color.get("a", color.get("alpha", color.get("opacity", 1.0))))
+        return (r, g, b, a)
+    return (
+        float(color[0]),
+        float(color[1]),
+        float(color[2]),
+        float(color[3]),
+    )
 
 
 class MainMenu(DirectObject, GameUIBase):
@@ -171,18 +194,15 @@ class MainMenu(DirectObject, GameUIBase):
         display_text = text.upper()
         font = self._resolve_cyber_font()
 
-        neon: Tuple[float, float, float, float]
-        neon_bright: Tuple[float, float, float, float]
-        glow_rgb: Tuple[float, float, float]
-
-        if accent.lower() == "magenta":
-            neon = (1.0, 0.0, 1.0, 1.0)
-            neon_bright = (1.0, 0.35, 1.0, 1.0)
-            glow_rgb = (1.0, 0.0, 1.0)
+        accent_key = accent.lower()
+        if accent_key == "magenta":
+            neon = _gui_rgba4((1.0, 0.0, 1.0, 1.0))
+            neon_bright = _gui_rgba4((1.0, 0.35, 1.0, 1.0))
+            glow_rgb = (float(neon[0]), float(neon[1]), float(neon[2]))
         else:
-            neon = (0.0, 1.0, 1.0, 1.0)
-            neon_bright = (0.35, 1.0, 1.0, 1.0)
-            glow_rgb = (0.0, 1.0, 1.0)
+            neon = _gui_rgba4((0.0, 1.0, 1.0, 1.0))
+            neon_bright = _gui_rgba4((0.35, 1.0, 1.0, 1.0))
+            glow_rgb = (float(neon[0]), float(neon[1]), float(neon[2]))
 
         boost = self._glow_alpha_boost()
         outer_alpha = min(0.22 + boost, 0.38)
@@ -203,11 +223,16 @@ class MainMenu(DirectObject, GameUIBase):
                 -hh - _CYBER_OUTER_GLOW_PAD,
                 hh + _CYBER_OUTER_GLOW_PAD,
             ),
-            frameColor=(glow_rgb[0], glow_rgb[1], glow_rgb[2], outer_alpha * 0.35),
+            frameColor=(
+                float(glow_rgb[0]),
+                float(glow_rgb[1]),
+                float(glow_rgb[2]),
+                float(outer_alpha * 0.35),
+            ),
             relief=DGG.FLAT,
             parent=root,
-            sort=-2,
         )
+        outer_glow.setBin("gui-popup", -2)
         outer_glow.setTransparency(TransparencyAttrib.MAlpha)
 
         inner_glow = DirectFrame(
@@ -217,34 +242,40 @@ class MainMenu(DirectObject, GameUIBase):
                 -hh - _CYBER_INNER_GLOW_PAD,
                 hh + _CYBER_INNER_GLOW_PAD,
             ),
-            frameColor=(glow_rgb[0], glow_rgb[1], glow_rgb[2], inner_alpha),
+            frameColor=(
+                float(glow_rgb[0]),
+                float(glow_rgb[1]),
+                float(glow_rgb[2]),
+                float(inner_alpha),
+            ),
             relief=DGG.FLAT,
             parent=root,
-            sort=-1,
         )
+        inner_glow.setBin("gui-popup", -1)
         inner_glow.setTransparency(TransparencyAttrib.MAlpha)
 
-        solid_press = (neon[0], neon[1], neon[2], 0.96)
+        solid_press = _gui_rgba4((neon[0], neon[1], neon[2], 0.96))
 
-        frame_colors = [
-            _BASE_FRAME_RGBA,
+        # DirectGui expects either one (R,G,B,A) or exactly four state tuples; use tuple not list.
+        frame_colors: Tuple[Tuple[float, float, float, float], ...] = (
+            _gui_rgba4(_BASE_FRAME_RGBA),
             solid_press,
-            _ROLL_FRAME_RGBA,
-            (0.12, 0.12, 0.12, 0.45),
-        ]
-        text_colors = [
+            _gui_rgba4(_ROLL_FRAME_RGBA),
+            _gui_rgba4((0.12, 0.12, 0.12, 0.45)),
+        )
+        text_fg: Tuple[Tuple[float, float, float, float], ...] = (
             neon,
             neon_bright,
-            (1.0, 1.0, 1.0, 1.0),
-            (0.35, 0.35, 0.35, 0.65),
-        ]
+            _gui_rgba4((1.0, 1.0, 1.0, 1.0)),
+            _gui_rgba4((0.35, 0.35, 0.35, 0.65)),
+        )
 
         btn = DirectButton(
             text=display_text,
             text_align=TextNode.ACenter,
             text_scale=0.62,
             text_font=font,
-            text_fg=text_colors,
+            text_fg=text_fg,
             frameSize=(-hw, hw, -hh, hh),
             frameColor=frame_colors,
             relief=DGG.RIDGE,
@@ -253,8 +284,8 @@ class MainMenu(DirectObject, GameUIBase):
             pressEffect=False,
             command=command,
             parent=root,
-            sort=0,
         )
+        btn.setBin("gui-popup", 0)
         btn.setTransparency(TransparencyAttrib.MAlpha)
 
         btn.bind(DGG.ENTER, lambda _e, p=root: self._cyber_hover_enter(p))
