@@ -10,7 +10,7 @@ Author: piotrek1372
 Version: 0.1.0
 """
 
-from setuptools import setup
+from setuptools import find_packages, setup
 
 # Package metadata
 NAME = "universal-racing-game"
@@ -77,13 +77,10 @@ setup(
             # These glob patterns ensure that non-Python resources are included
             # in the final distribution packages.
             #
-            # - locales/*.json: Localization files containing translated strings
-            # - assets/**/*: Game assets including 3D models, textures, sounds
-            # - assets/icons/*: Application icons for all supported platforms
+            # - assets/lang/*.json: Localization strings
+            # - assets/**/*: Models, textures, sounds, fonts, icons
             "include_patterns": [
-                "locales/*.json",
                 "assets/**/*",
-                "assets/icons/*",
             ],
 
             # Output directory for built runtime packages
@@ -126,10 +123,13 @@ setup(
     # Python version requirement
     python_requires=">=3.7",
 
-    # Package structure
-    package_dir={'': 'src'},
-    packages=['src'],
-    py_modules=[],
+    # Package structure (project root contains core, ui, and src.*)
+    package_dir={"": "."},
+    packages=find_packages(
+        where=".",
+        include=("src", "src.*", "core", "core.*", "ui", "ui.*"),
+    ),
+    py_modules=["run_game"],
 
     # Classifiers for PyPI
     classifiers=[

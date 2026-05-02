@@ -13,9 +13,10 @@ Version: 1.0.0
 import json
 import locale
 import logging
-import os
 from pathlib import Path
 from typing import Dict, Optional, Any
+
+from core.path_manager import PathManager
 
 
 class LocalizationManager:
@@ -40,11 +41,10 @@ class LocalizationManager:
         
         Args:
             locales_dir: Path to directory containing locale JSON files.
-                        Defaults to '../locales' relative to this file (src/).
+                        Defaults to assets/lang via PathManager.
         """
         if locales_dir is None:
-            # Ustaw bazowa sciezke: wychodzimy z src/ do katalogu glownego
-            self.locales_dir: Path = Path(__file__).parent.parent / "locales"
+            self.locales_dir: Path = PathManager.LANG_DIR
         else:
             self.locales_dir: Path = Path(locales_dir)
         self.current_language: str = ""

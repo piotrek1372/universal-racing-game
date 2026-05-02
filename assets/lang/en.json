@@ -1,0 +1,22 @@
+{
+  "language": "English",
+  "code": "en",
+  "welcome_message": "Welcome to Universal Racing Game!",
+  "menu_title": "UNIVERSAL RACING GAME",
+  "btn_start": "Start Game",
+  "btn_free_roam": "Free Roam",
+  "btn_settings": "Settings",
+  "btn_exit": "Exit",
+  "engine_status": "Engine: {status}",
+  "menu": {
+    "start": "Start Game",
+    "options": "Options",
+    "exit": "Exit"
+  },
+  "game": {
+    "speed": "Speed",
+    "lap": "Lap",
+    "position": "Position",
+    "finish": "Finish"
+  }
+}

@@ -89,6 +89,7 @@ if main_path.exists():
     content = main_path.read_text()
     checks = [
         ("from src.ui_manager import SplashManager", "SplashManager import"),
+        ("from core.path_manager import PathManager", "PathManager import"),
         ("_show_splash", "_show_splash method"),
         ("_on_splash_complete", "_on_splash_complete method"),
         ("splash_manager", "splash_manager attribute"),

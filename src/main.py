@@ -9,59 +9,35 @@ Author: URG Development Team
 Version: 1.0.0
 """
 
+from __future__ import annotations
+
 import sys
-import os
 from pathlib import Path
 from typing import Optional
 
-# Check if we need to fix imports for direct script execution
-if Path(__file__).name == 'main.py' and not __package__:
-    # We're running as a script or imported without proper package context
-    # Re-import this module properly using importlib
-    import importlib.util
-    import types
-    
-    # Ensure parent directory is in path
-    parent_dir = Path(__file__).parent.parent
-    if str(parent_dir) not in sys.path:
-        sys.path.insert(0, str(parent_dir))
-    
-    # Create a proper module with correct __package__
-    spec = importlib.util.spec_from_file_location('src.main', __file__)
-    proper_module = importlib.util.module_from_spec(spec)
-    proper_module.__package__ = 'src'
-    
-    # Add to sys.modules and execute
-    sys.modules['src.main'] = proper_module
-    sys.modules[__name__] = proper_module
-    spec.loader.exec_module(proper_module)
-    
-    # Copy all attributes to this module
-    for key, value in proper_module.__dict__.items():
-        if key not in globals():
-            globals()[key] = value
-    
-    # Prevent further execution of this script
-    sys.exit(0)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_project_root_str = str(_PROJECT_ROOT)
+if _project_root_str not in sys.path:
+    sys.path.insert(0, _project_root_str)
 
-# Normal package imports
-from .i18n import get_localization_manager
-from .ecs import (
+from core.path_manager import PathManager
+from src.i18n import get_localization_manager
+from src.ecs import (
     Entity,
     TransformComponent,
     TextComponent,
     SystemManager,
-    LocaleSystem
+    LocaleSystem,
 )
-from .ui_manager import SplashManager
-from .core.physics import PhysicsWorld, PhysicsWorldConfig
-from .game.vehicle import Vehicle
+from src.ui_manager import SplashManager
+from src.core.physics import PhysicsWorld, PhysicsWorldConfig
+from src.game.vehicle import Vehicle
 
 # Panda3D imports
 try:
     from direct.showbase.ShowBase import ShowBase
     from direct.showbase.ShowBaseGlobal import globalClock
-    from direct.gui.DirectGui import DirectLabel, DirectButton
+    from direct.gui.DirectGui import DGG, DirectLabel, DirectButton
     from panda3d.core import LVector3, TextNode, NodePath
     from panda3d.core import loadPrcFileData
     from direct.task import Task
@@ -104,8 +80,7 @@ class UniversalRacingGame(ShowBase):
         
         # Initialize systems
         self.locale_manager = get_localization_manager()
-        # Override locales directory to project root
-        self.locale_manager.locales_dir = Path("locales")
+        self.locale_manager.locales_dir = PathManager.LANG_DIR
         self.ecs_manager = SystemManager()
         self.ui_elements: list[NodePath] = []
         self.splash_manager: Optional[SplashManager] = None

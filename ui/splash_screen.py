@@ -7,15 +7,17 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from direct.interval.IntervalGlobal import Func, Parallel, Sequence, Wait
-from panda3d.core import AudioSound, CardMaker, NodePath, TransparencyAttrib
+from panda3d.core import AudioSound, NodePath
 
 from core.path_manager import PathManager
+
+from ui.base_screen import GameUIBase, fullscreen_textured_card
 
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
-class SplashScreen:
+class SplashScreen(GameUIBase):
     """Create and run the splash sequence with optional background audio."""
 
     def __init__(
@@ -24,7 +26,7 @@ class SplashScreen:
         on_complete: Callable[[], None],
         soundtrack_name: str = "Tarmac_Predator.mp3",
     ) -> None:
-        self.game_base = game_base
+        super().__init__(game_base)
         self.on_complete = on_complete
         self.sequence: Optional[Sequence] = None
         self.bg_music: Optional[AudioSound] = self._load_background_music(soundtrack_name)
@@ -43,7 +45,7 @@ class SplashScreen:
             self.bg_music.stop()
 
     def _load_background_music(self, filename: str) -> Optional[AudioSound]:
-        """Load soundtrack from assets/audio or assets/soundtracks."""
+        """Load soundtrack from assets/audio."""
         resolved_audio_path: Optional[Path] = PathManager.resolve_audio_file(filename)
         if resolved_audio_path is None:
             LOGGER.warning("Background music not found: %s", filename)
@@ -71,14 +73,7 @@ class SplashScreen:
             LOGGER.warning("Splash image missing: %s", image_name)
             return None
 
-        cm: CardMaker = CardMaker(f"splash_{image_name}")
-        cm.setFrameFullscreenQuad()
-        card: NodePath = self.game_base.render2d.attachNewNode(cm.generate())
-        texture = self.game_base.loader.loadTexture(str(image_path))
-        card.setTexture(texture)
-        card.setTransparency(TransparencyAttrib.MAlpha)
-        card.setColorScale(1, 1, 1, 0)
-        return card
+        return fullscreen_textured_card(self.game_base, image_path, f"splash_{image_name}")
 
     def _build_sequence(self) -> Sequence:
         """Build the splash sequence and transition to menu."""

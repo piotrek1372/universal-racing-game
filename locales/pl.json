@@ -1,8 +1,0 @@
-{
-    "menu_title": "UNIVERSAL RACING GAME",
-    "btn_start": "Start (Online/Offline)",
-    "btn_free_roam": "Swobodna Jazda",
-    "btn_settings": "Ustawienia",
-    "btn_exit": "Wyjście",
-    "engine_status": "Silnik: {status}"
-}

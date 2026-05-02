@@ -33,11 +33,9 @@ from direct.interval.IntervalGlobal import (
     Func,
     Wait
 )
-from pathlib import Path
-import sys
-import os
+from core.path_manager import PathManager
 
-from .i18n import get_localization_manager
+from src.i18n import get_localization_manager
 
 
 class MainMenu:
@@ -141,23 +139,18 @@ class MainMenu:
 
     def _get_font(self):
         """
-        Get a font that supports Polish Unicode characters.
-
-        Panda3D's default font supports basic ASCII but for full Unicode
-        support including Polish diacritics (ą, ę, ś, ć, ż, ź, ó, ł, ń),
-        place a .ttf font file in assets/fonts/ and load it here.
-
-        Example:
-            from panda3d.core import TextFont
-            return loader.loadFont("assets/fonts/DejaVuSans.ttf")
+        Load a Unicode-capable font from assets/fonts when present.
 
         Returns:
-            The default Panda3D font (supports basic ASCII).
+            Loaded Panda3D font or None for built-in default.
         """
-        # Using Panda3D's default font.
-        # For full Polish character support, uncomment the code above and
-        # place a Unicode-compatible .ttf font file in assets/fonts/.
-        return None
+        path = PathManager.resolve_font_file("DejaVuSans.ttf", "NotoSans-Regular.ttf")
+        if path is None:
+            return None
+        try:
+            return self.base.loader.loadFont(str(path))
+        except OSError:
+            return None
 
     # --- Button callback methods ---
 
@@ -240,33 +233,17 @@ class SplashManager:
 
     def _setup_paths(self) -> None:
         """Set up file paths for splash images and audio."""
-        # Path from src/ to assets/
-        assets_dir = Path("../assets")
-        images_dir = assets_dir / "images"
-        audio_dir = assets_dir / "audio"
-
-        # Check for splash images
-        splash_files = [
-            images_dir / "splash1.png",
-            images_dir / "splash2.png",
-            images_dir / "splash3.png",
-        ]
-
-        for splash_file in splash_files:
-            if splash_file.exists():
-                self.splash_images.append(str(splash_file))
+        for name in ("splash1.png", "splash2.png", "splash3.png"):
+            resolved = PathManager.resolve_image_file(name)
+            if resolved is not None:
+                self.splash_images.append(str(resolved))
             else:
-                print(f"Warning: Splash image not found: {splash_file}")
+                print(f"Warning: Splash image not found: {name}")
 
-        # Check for audio file
-        audio_files = [
-            audio_dir / "splash_ambient.mp3",
-            audio_dir / "splash_ambient.wav",
-        ]
-
-        for audio_file in audio_files:
-            if audio_file.exists():
-                self.audio_file = str(audio_file)
+        for audio_name in ("splash_ambient.mp3", "splash_ambient.wav"):
+            resolved = PathManager.resolve_audio_file(audio_name)
+            if resolved is not None:
+                self.audio_file = str(resolved)
                 break
 
         if not self.audio_file:

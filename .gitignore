@@ -169,3 +169,7 @@ bin/
 userdata/
 save/
 logs/
+
+# Local scratch / agent dumps
+debug_log.txt
+full_project_context.txt

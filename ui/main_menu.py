@@ -11,15 +11,17 @@ from direct.gui.OnscreenImage import OnscreenImage
 from direct.showbase.DirectObject import DirectObject
 from direct.showbase.MessengerGlobal import messenger
 from direct.interval.IntervalGlobal import Sequence
-from panda3d.core import CardMaker, NodePath, TransparencyAttrib
+from panda3d.core import NodePath, TransparencyAttrib
 
 from core.path_manager import PathManager
+
+from ui.base_screen import GameUIBase, solid_color_menu_fallback_card
 
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
-class MainMenu(DirectObject):
+class MainMenu(DirectObject, GameUIBase):
     """Render and manage the main menu UI widgets."""
 
     def __init__(
@@ -29,8 +31,8 @@ class MainMenu(DirectObject):
         on_settings: Callable[[], None],
         on_exit: Callable[[], None],
     ) -> None:
-        super().__init__()
-        self.game_base = game_base
+        DirectObject.__init__(self)
+        GameUIBase.__init__(self, game_base)
         self.labels = labels
         self.on_settings = on_settings
         self.on_exit = on_exit
@@ -70,7 +72,7 @@ class MainMenu(DirectObject):
             "menu_bg.png",
             "main_menu.png",
         )
-        menu_aspect: float = self.game_base.getAspectRatio()
+        menu_aspect: float = self.aspect_ratio()
         bg_scale: tuple[float, float, float] = (menu_aspect, 1.0, 1.0)
 
         if background_path is not None and background_path.exists():
@@ -83,13 +85,7 @@ class MainMenu(DirectObject):
             self.background.setTransparency(TransparencyAttrib.MAlpha)
         else:
             LOGGER.warning("Menu background image not found, using color fallback.")
-            card_maker: CardMaker = CardMaker("menu_bg_fallback")
-            card_maker.setFrame(-menu_aspect, menu_aspect, -1.0, 1.0)
-            self.background = self.game_base.render2d.attachNewNode(card_maker.generate())
-            self.background.setColor(0.15, 0.15, 0.15, 1.0)
-            self.background.setBin("background", 0)
-            self.background.setDepthWrite(False)
-            self.background.setDepthTest(False)
+            self.background = solid_color_menu_fallback_card(self.game_base, menu_aspect)
 
         self.background.setColorScale(1, 1, 1, 0)
         self.background_fade = self.background.colorScaleInterval(
